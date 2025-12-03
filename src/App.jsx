@@ -108,7 +108,8 @@ const CropDashboard = () => {
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  // --- 2. CORE FUNCTIONS ---
+  // --- 2. CORE MAP & API FUNCTIONS ---
+
   const fetchAnalysisFromAzure = async (lat, lon, cropName, currentProps) => {
     setLoading(true); setShowAnalytics(true);
     if (isMobile) setIsMobileMenuOpen(false);
@@ -162,7 +163,23 @@ const CropDashboard = () => {
         const btn = document.getElementById('analyze-btn');
         if(btn) btn.onclick = (event) => { event.preventDefault(); fetchAnalysisFromAzure(lat, lon, cropName, props); };
     });
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
+
+  const selectSuggestion = (sug) => {
+    setAddress(sug.display_name.split(',')[0]); 
+    setShowSuggestions(false);
+    
+    if (!map.current) return; // Guard
+
+    const lat = parseFloat(sug.lat); 
+    const lon = parseFloat(sug.lon);
+    
+    if(marker.current) marker.current.remove();
+    marker.current = new window.maplibregl.Marker({ color: '#ef4444' }).setLngLat([lon, lat]).addTo(map.current);
+    map.current.flyTo({ center: [lon, lat], zoom: 15, duration: 2000 });
+    
+    if (isMobile) setIsMobileMenuOpen(false);
+  };
 
   const handleAddressChange = (val) => {
     setAddress(val);
@@ -185,21 +202,7 @@ const CropDashboard = () => {
     }, 400);
   };
 
-  const selectSuggestion = (sug) => {
-    setAddress(sug.display_name.split(',')[0]); 
-    setShowSuggestions(false);
-    if (!map.current) return;
-
-    const lat = parseFloat(sug.lat); 
-    const lon = parseFloat(sug.lon);
-    
-    if(marker.current) marker.current.remove();
-    marker.current = new window.maplibregl.Marker({ color: '#ef4444' }).setLngLat([lon, lat]).addTo(map.current);
-    map.current.flyTo({ center: [lon, lat], zoom: 15, duration: 2000 });
-    if (isMobile) setIsMobileMenuOpen(false);
-  };
-
-  // --- 3. MAP INITIALIZATION ---
+  // --- 3. MAP INIT & AUTO ZOOM (Fixed) ---
   useEffect(() => {
     let isMounted = true;
 
@@ -236,38 +239,48 @@ const CropDashboard = () => {
       map.current.on('load', () => {
         if (!map.current) return;
         
-        // Add layers
         map.current.addSource("crops2022", { type: "vector", url: PMTILES_2022, maxzoom: 11, promoteId: "CROP_TYPE" });
         map.current.addLayer({
           id: "visual-layer", type: "fill", source: "crops2022", "source-layer": `crops${CURRENT_YEAR}`, 
           paint: { "fill-color": [ "match", ["to-string", ["get", "CROP_TYPE"]], ...Object.entries(cropColors).flat(), "rgba(0, 0, 0, 0)" ], "fill-opacity": 0.75 }
         });
+        
         map.current.on('click', 'visual-layer', handleMapClick);
         map.current.on('mousemove', 'visual-layer', () => { if (map.current) map.current.getCanvas().style.cursor = 'pointer'; });
         map.current.on('mouseleave', 'visual-layer', () => { if (map.current) map.current.getCanvas().style.cursor = ''; });
 
-        // ✅ AUTO-ZOOM MOVED HERE (Guarantees map is loaded)
+        // ✅ AUTO-ZOOM FIXED: Runs ONLY after map is fully loaded
         const params = new URLSearchParams(window.location.search);
         const urlAddress = params.get('Address');
+        
         if (urlAddress) {
-          setAddress(urlAddress); // Update UI
+          console.log("Auto-zooming to:", urlAddress);
+          setAddress(urlAddress); // Fill visual input
+          setIsSearching(true);
+
+          // Bypass suggestion logic, go straight to fetching and flying
           fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(urlAddress)}&countrycodes=us&limit=1`, {
             headers: { 'User-Agent': 'CropDashboard/1.0' }
           })
           .then(res => res.json())
           .then(data => {
             if (data && data.length > 0) {
-              const lat = parseFloat(data[0].lat); 
-              const lon = parseFloat(data[0].lon);
+              const bestMatch = data[0];
+              const lat = parseFloat(bestMatch.lat); 
+              const lon = parseFloat(bestMatch.lon);
               
-              if(marker.current) marker.current.remove();
-              marker.current = new window.maplibregl.Marker({ color: '#ef4444' }).setLngLat([lon, lat]).addTo(map.current);
-              
-              // We are inside map.on('load'), so flyTo is safe now
-              map.current.flyTo({ center: [lon, lat], zoom: 15, duration: 2000 });
+              if (map.current) {
+                // Drop pin
+                if(marker.current) marker.current.remove();
+                marker.current = new window.maplibregl.Marker({ color: '#ef4444' }).setLngLat([lon, lat]).addTo(map.current);
+                
+                // Fly
+                map.current.flyTo({ center: [lon, lat], zoom: 15, duration: 2000 });
+              }
             }
           })
-          .catch(e => console.error("Auto-zoom failed", e));
+          .catch(e => console.error("Auto-zoom API error", e))
+          .finally(() => setIsSearching(false));
         }
       });
     };
