@@ -11,33 +11,22 @@ const API_ENDPOINT = "https://crop-detection-dcecevhvh5ard2ah.eastus-01.azureweb
 const CURRENT_YEAR = 2022;
 const PMTILES_2022 = "pmtiles://https://satelliteimages.blob.core.windows.net/pmt-tiles/crop_2022.pmtiles";
 
-// --- 1. ROBUST RESOURCE LOADER (FIXED BLANK SCREEN BUG) ---
+// --- RESOURCE LOADER ---
 const loadMapResources = () => {
   return new Promise(async (resolve, reject) => {
-    // Check if globals already exist
-    if (window.maplibregl && window.pmtiles) {
-      return resolve();
-    }
+    if (window.maplibregl && window.pmtiles) return resolve();
 
     const loadScript = (src) => new Promise((res, rej) => {
-      // If script exists, check if it's loaded, otherwise wait for it
       const existing = document.querySelector(`script[src="${src}"]`);
       if (existing) {
-        // If the global var exists, we are good
         if (src.includes('maplibre') && window.maplibregl) return res();
         if (src.includes('pmtiles') && window.pmtiles) return res();
-        
-        // Otherwise attach a listener to the existing tag
         existing.addEventListener('load', res);
         existing.addEventListener('error', rej);
         return;
       }
-
       const s = document.createElement('script'); 
-      s.src = src; 
-      s.async = true; 
-      s.onload = res; 
-      s.onerror = rej;
+      s.src = src; s.async = true; s.onload = res; s.onerror = rej;
       document.head.appendChild(s);
     });
 
@@ -55,13 +44,11 @@ const loadMapResources = () => {
         loadScript('https://unpkg.com/pmtiles@3.0.5/dist/pmtiles.js')
       ]);
       resolve();
-    } catch (err) {
-      reject(err);
-    }
+    } catch (err) { reject(err); }
   });
 };
 
-// --- 2. DATA LOGIC HELPERS ---
+// --- DATA HELPERS ---
 const getTextureClass = (sand, clay) => {
   if (!sand || !clay) return "Unknown";
   if (clay >= 40) return "Clay";
@@ -74,15 +61,10 @@ const getHealthScore = (soil) => {
   let score = 100;
   const issues = [];
   const strengths = [];
-  if (soil.ph < 6.0) { 
-    score -= 15; issues.push({ message: `Acidic Soil (pH ${soil.ph.toFixed(1)})`, severity: "medium" }); 
-  } else if (soil.ph > 7.5) {
-    score -= 15; issues.push({ message: `Alkaline Soil (pH ${soil.ph.toFixed(1)})`, severity: "medium" });
-  } else { strengths.push({ message: "pH is in optimal range" }); }
-  
-  if (soil.soc < 15) { score -= 20; issues.push({ message: "Low organic matter", severity: "high" }); } 
-  else { strengths.push({ message: "Good organic matter" }); }
-  
+  if (soil.ph < 6.0) { score -= 15; issues.push({ message: `Acidic Soil (pH ${soil.ph.toFixed(1)})`, severity: "medium" }); } 
+  else if (soil.ph > 7.5) { score -= 15; issues.push({ message: `Alkaline Soil (pH ${soil.ph.toFixed(1)})`, severity: "medium" }); } 
+  else { strengths.push({ message: "pH is in optimal range" }); }
+  if (soil.soc < 15) { score -= 20; issues.push({ message: "Low organic matter", severity: "high" }); } else { strengths.push({ message: "Good organic matter" }); }
   if (soil.nitrogen < 2.0) { score -= 15; issues.push({ message: "Low Nitrogen", severity: "medium" }); }
   return { score: Math.max(0, score), issues, strengths };
 };
@@ -95,7 +77,7 @@ const getFertilizerPlan = (soil) => {
   return plan;
 };
 
-// --- 3. MAIN COMPONENT ---
+// --- MAIN COMPONENT ---
 const CropDashboard = () => {
   const [address, setAddress] = useState('');
   const [suggestions, setSuggestions] = useState([]);
@@ -118,6 +100,7 @@ const CropDashboard = () => {
   const CROP_LOOKUP = { 1: 'Corn', 4: 'Sorghum', 5: 'Soybeans', 24: 'Winter Wheat', 36: 'Alfalfa', 43: 'Potatoes', 61: 'Fallow', 176: 'Grassland', 204: 'Pistachios', 212: 'Oranges', 75: 'Almonds' };
   const cropColors = { '1': '#F4D03F', '5': '#229954', '24': '#A04000', '36': '#2ECC71', '176': '#CDDC39', '43': '#FFCC80', '75': '#D7CCC8', '61': '#BDBDBD' };
 
+  // --- 1. RESIZE LISTENER ---
   useEffect(() => {
     const checkMobile = () => setIsMobile(window.innerWidth < 768);
     checkMobile();
@@ -125,40 +108,35 @@ const CropDashboard = () => {
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  // --- INITIALIZE MAP ---
+  // --- 2. URL QUERY STRING LISTENER (NEW & CORRECTLY PLACED) ---
+  useEffect(() => {
+    // This runs once when the app loads
+    const params = new URLSearchParams(window.location.search);
+    const urlAddress = params.get('Address'); // Reads ?Address=...
+    
+    if (urlAddress) {
+      setAddress(urlAddress);
+      // Trigger the search logic immediately
+      handleAddressChange(urlAddress);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // --- 3. MAP INITIALIZATION ---
   useEffect(() => {
     let isMounted = true;
 
     const initMap = async () => {
       if (mapInitialized.current) return;
+      try { await loadMapResources(); } catch (e) { return; }
       
-      try {
-        await loadMapResources();
-      } catch (e) {
-        console.error("Failed to load map resources", e);
-        return;
-      }
-      
-      if (!isMounted) return;
-      if (!mapContainer.current) return;
-      // Double check globals exist
-      if (!window.maplibregl || !window.pmtiles) {
-          console.error("MapLibre or PMTiles not found after load.");
-          return;
-      }
+      if (!isMounted || !mapContainer.current) return;
+      if (!window.maplibregl || !window.pmtiles) return;
 
       if (!window.maplibregl.config?.REGISTERED_PROTOCOLS?.pmtiles) {
          const protocol = new window.pmtiles.Protocol();
          window.maplibregl.addProtocol("pmtiles", protocol.tile);
       }
-      useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const urlAddress = params.get('Address');
-    if (urlAddress) {
-      setAddress(urlAddress);
-      handleAddressChange(urlAddress);
-    }
-  }, []);
 
       mapInitialized.current = true;
 
@@ -168,13 +146,10 @@ const CropDashboard = () => {
         zoom: 4,
         maxTileCacheSize: isMobile ? 0 : 4, 
         pixelRatio: isMobile ? Math.min(window.devicePixelRatio, 1.5) : window.devicePixelRatio,
-        fadeDuration: 0, 
-        attributionControl: false,
+        fadeDuration: 0, attributionControl: false,
         style: {
           version: 8,
-          sources: { 
-            osm: { type: "raster", tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"], tileSize: 256, maxzoom: 19, volatile: true } 
-          },
+          sources: { osm: { type: "raster", tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"], tileSize: 256, maxzoom: 19, volatile: true } },
           layers: [{ id: "osm", type: "raster", source: "osm" }]
         }
       });
@@ -198,16 +173,13 @@ const CropDashboard = () => {
 
     return () => {
       isMounted = false;
-      if (map.current) {
-        map.current.remove();
-        map.current = null;
-        mapInitialized.current = false;
-      }
+      if (map.current) { map.current.remove(); map.current = null; mapInitialized.current = false; }
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleMapClick = useCallback((e) => {
-    if (!map.current) return; // Guard clause
+    if (!map.current) return;
     if (!e.features || !e.features[0]) return;
     
     const props = e.features[0].properties;
@@ -236,11 +208,10 @@ const CropDashboard = () => {
         const btn = document.getElementById('analyze-btn');
         if(btn) btn.onclick = (event) => { event.preventDefault(); fetchAnalysisFromAzure(lat, lon, cropName, props); };
     });
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fetchAnalysisFromAzure = async (lat, lon, cropName, currentProps) => {
-    setLoading(true);
-    setShowAnalytics(true);
+    setLoading(true); setShowAnalytics(true);
     if (isMobile) setIsMobileMenuOpen(false);
 
     try {
@@ -258,10 +229,8 @@ const CropDashboard = () => {
       });
     } catch (error) {
       console.error("Analysis Error:", error);
-      alert("Analysis failed. Please check console.");
-    } finally {
-      setLoading(false);
-    }
+      alert("Analysis failed.");
+    } finally { setLoading(false); }
   };
 
   const handleAddressChange = (val) => {
@@ -281,14 +250,14 @@ const CropDashboard = () => {
         }).sort((a, b) => b.rankScore - a.rankScore).slice(0, 5) : [];
         setSuggestions(ranked);
         setShowSuggestions(ranked.length > 0);
-      } catch(e) { console.error(e); setSuggestions([]); } finally { setIsSearching(false); }
+      } catch(e) { setSuggestions([]); } finally { setIsSearching(false); }
     }, 400);
   };
 
   const selectSuggestion = (sug) => {
     setAddress(sug.display_name.split(',')[0]); 
     setShowSuggestions(false);
-    if (!map.current) return; // ✅ CRASH FIX
+    if (!map.current) return;
 
     const lat = parseFloat(sug.lat); 
     const lon = parseFloat(sug.lon);
