@@ -1,10 +1,7 @@
-
-
 # 🌾 Crop & Soil Analytics Dashboard
 
 A high-performance, responsive React application for analyzing agricultural field data. This dashboard visualizes crop types using vector tiles, provides real-time soil health analysis, and generates fertilizer recommendations based on Azure backend data.
 
-*(Replace this link with your actual screenshot URL later)*
 
 ## 🚀 Features
 

@@ -1,0 +1,44 @@
+name: Build and Deploy to Azure
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Download your code
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      # 2. Log in to Azure using the JSON secret you just added
+      - name: Log in to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      # 3. Log in to your specific Registry
+      - name: Log in to Container Registry
+        run: az acr login --name cropdetecton
+
+      # 4. Build the image and tag it with the Commit ID (github.sha)
+      #    This ensures every change gets a unique version number.
+      - name: Build and Push Docker Image
+        run: |
+          docker build -t cropdetecton.azurecr.io/crop-analytics-frontend:${{ github.sha }} .
+          docker push cropdetecton.azurecr.io/crop-analytics-frontend:${{ github.sha }}
+
+      # 5. Tell Azure Container Apps to update to this new image
+      - name: Deploy to Container App
+        uses: azure/container-apps-deploy-action@v1
+        with:
+          appSourcePath: ${{ github.workspace }} 
+          acrName: cropdetecton
+          containerAppName: cropdetection
+          resourceGroup: MyAgentResourceGroup
+          
+          # This matches the image we just pushed above
+          imageToDeploy: cropdetecton.azurecr.io/crop-analytics-frontend:${{ github.sha }}
+          targetPort: 80
