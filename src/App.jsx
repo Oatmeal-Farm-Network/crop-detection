@@ -151,6 +151,14 @@ const CropDashboard = () => {
          const protocol = new window.pmtiles.Protocol();
          window.maplibregl.addProtocol("pmtiles", protocol.tile);
       }
+      useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const urlAddress = params.get('Address');
+    if (urlAddress) {
+      setAddress(urlAddress);
+      handleAddressChange(urlAddress);
+    }
+  }, []);
 
       mapInitialized.current = true;
 
