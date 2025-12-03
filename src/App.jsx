@@ -97,8 +97,48 @@ const CropDashboard = () => {
   const popup = useRef(null);
   const mapInitialized = useRef(false);
 
-  const CROP_LOOKUP = { 1: 'Corn', 4: 'Sorghum', 5: 'Soybeans', 24: 'Winter Wheat', 36: 'Alfalfa', 43: 'Potatoes', 61: 'Fallow', 176: 'Grassland', 204: 'Pistachios', 212: 'Oranges', 75: 'Almonds' };
-  const cropColors = { '1': '#F4D03F', '5': '#229954', '24': '#A04000', '36': '#2ECC71', '176': '#CDDC39', '43': '#FFCC80', '75': '#D7CCC8', '61': '#BDBDBD' };
+  // ✅ UPDATED CROP LIST (Includes Orchards)
+  const CROP_LOOKUP = { 
+    1: 'Corn', 
+    4: 'Sorghum', 
+    5: 'Soybeans', 
+    24: 'Winter Wheat', 
+    36: 'Alfalfa', 
+    43: 'Potatoes', 
+    61: 'Fallow', 
+    176: 'Grassland',
+    204: 'Pistachios', 
+    212: 'Oranges', 
+    75: 'Almonds',
+    // New Orchard Crops
+    66: 'Cherries',
+    67: 'Peaches',
+    68: 'Apples',
+    69: 'Grapes',
+    76: 'Walnuts',
+    77: 'Pears',
+    223: 'Apricots'
+  };
+  
+  // ✅ UPDATED COLORS (Distinct colors for orchards)
+  const cropColors = { 
+    '1': '#F4D03F',   // Corn
+    '5': '#229954',   // Soybeans
+    '24': '#A04000',  // Wheat
+    '36': '#2ECC71',  // Alfalfa
+    '176': '#CDDC39', // Grassland
+    '43': '#FFCC80',  // Potatoes
+    '75': '#D7CCC8',  // Almonds
+    '61': '#BDBDBD',  // Fallow
+    // Orchards
+    '66': '#C2185B',  // Cherries (Pink)
+    '67': '#FFAB91',  // Peaches (Peach)
+    '68': '#D32F2F',  // Apples (Red)
+    '69': '#7B1FA2',  // Grapes (Purple)
+    '76': '#795548',  // Walnuts (Brown)
+    '77': '#AED581',  // Pears (Light Green)
+    '223': '#FFCA28'  // Apricots (Yellow-Orange)
+  };
 
   // --- 1. RESIZE LISTENER ---
   useEffect(() => {
@@ -108,8 +148,7 @@ const CropDashboard = () => {
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  // --- 2. CORE MAP & API FUNCTIONS ---
-
+  // --- 2. CORE FUNCTIONS ---
   const fetchAnalysisFromAzure = async (lat, lon, cropName, currentProps) => {
     setLoading(true); setShowAnalytics(true);
     if (isMobile) setIsMobileMenuOpen(false);
@@ -163,23 +202,7 @@ const CropDashboard = () => {
         const btn = document.getElementById('analyze-btn');
         if(btn) btn.onclick = (event) => { event.preventDefault(); fetchAnalysisFromAzure(lat, lon, cropName, props); };
     });
-  }, []);
-
-  const selectSuggestion = (sug) => {
-    setAddress(sug.display_name.split(',')[0]); 
-    setShowSuggestions(false);
-    
-    if (!map.current) return; // Guard
-
-    const lat = parseFloat(sug.lat); 
-    const lon = parseFloat(sug.lon);
-    
-    if(marker.current) marker.current.remove();
-    marker.current = new window.maplibregl.Marker({ color: '#ef4444' }).setLngLat([lon, lat]).addTo(map.current);
-    map.current.flyTo({ center: [lon, lat], zoom: 15, duration: 2000 });
-    
-    if (isMobile) setIsMobileMenuOpen(false);
-  };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleAddressChange = (val) => {
     setAddress(val);
@@ -202,7 +225,21 @@ const CropDashboard = () => {
     }, 400);
   };
 
-  // --- 3. MAP INIT & AUTO ZOOM (Fixed) ---
+  const selectSuggestion = (sug) => {
+    setAddress(sug.display_name.split(',')[0]); 
+    setShowSuggestions(false);
+    if (!map.current) return;
+
+    const lat = parseFloat(sug.lat); 
+    const lon = parseFloat(sug.lon);
+    
+    if(marker.current) marker.current.remove();
+    marker.current = new window.maplibregl.Marker({ color: '#ef4444' }).setLngLat([lon, lat]).addTo(map.current);
+    map.current.flyTo({ center: [lon, lat], zoom: 15, duration: 2000 });
+    if (isMobile) setIsMobileMenuOpen(false);
+  };
+
+  // --- 3. MAP INITIALIZATION ---
   useEffect(() => {
     let isMounted = true;
 
@@ -249,16 +286,14 @@ const CropDashboard = () => {
         map.current.on('mousemove', 'visual-layer', () => { if (map.current) map.current.getCanvas().style.cursor = 'pointer'; });
         map.current.on('mouseleave', 'visual-layer', () => { if (map.current) map.current.getCanvas().style.cursor = ''; });
 
-        // ✅ AUTO-ZOOM FIXED: Runs ONLY after map is fully loaded
+        // ✅ AUTO-ZOOM (Wait for map readiness)
         const params = new URLSearchParams(window.location.search);
         const urlAddress = params.get('Address');
         
         if (urlAddress) {
-          console.log("Auto-zooming to:", urlAddress);
-          setAddress(urlAddress); // Fill visual input
+          setAddress(urlAddress); 
           setIsSearching(true);
 
-          // Bypass suggestion logic, go straight to fetching and flying
           fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(urlAddress)}&countrycodes=us&limit=1`, {
             headers: { 'User-Agent': 'CropDashboard/1.0' }
           })
@@ -270,11 +305,8 @@ const CropDashboard = () => {
               const lon = parseFloat(bestMatch.lon);
               
               if (map.current) {
-                // Drop pin
                 if(marker.current) marker.current.remove();
                 marker.current = new window.maplibregl.Marker({ color: '#ef4444' }).setLngLat([lon, lat]).addTo(map.current);
-                
-                // Fly
                 map.current.flyTo({ center: [lon, lat], zoom: 15, duration: 2000 });
               }
             }
