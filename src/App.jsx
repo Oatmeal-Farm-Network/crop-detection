@@ -108,8 +108,7 @@ const CropDashboard = () => {
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  // --- 2. CORE FUNCTIONS (Defined before effects) ---
-
+  // --- 2. CORE FUNCTIONS ---
   const fetchAnalysisFromAzure = async (lat, lon, cropName, currentProps) => {
     setLoading(true); setShowAnalytics(true);
     if (isMobile) setIsMobileMenuOpen(false);
@@ -200,7 +199,7 @@ const CropDashboard = () => {
     if (isMobile) setIsMobileMenuOpen(false);
   };
 
-  // --- 3. MAP INITIALIZATION EFFECT ---
+  // --- 3. MAP INITIALIZATION ---
   useEffect(() => {
     let isMounted = true;
 
@@ -236,6 +235,8 @@ const CropDashboard = () => {
 
       map.current.on('load', () => {
         if (!map.current) return;
+        
+        // Add layers
         map.current.addSource("crops2022", { type: "vector", url: PMTILES_2022, maxzoom: 11, promoteId: "CROP_TYPE" });
         map.current.addLayer({
           id: "visual-layer", type: "fill", source: "crops2022", "source-layer": `crops${CURRENT_YEAR}`, 
@@ -244,6 +245,30 @@ const CropDashboard = () => {
         map.current.on('click', 'visual-layer', handleMapClick);
         map.current.on('mousemove', 'visual-layer', () => { if (map.current) map.current.getCanvas().style.cursor = 'pointer'; });
         map.current.on('mouseleave', 'visual-layer', () => { if (map.current) map.current.getCanvas().style.cursor = ''; });
+
+        // ✅ AUTO-ZOOM MOVED HERE (Guarantees map is loaded)
+        const params = new URLSearchParams(window.location.search);
+        const urlAddress = params.get('Address');
+        if (urlAddress) {
+          setAddress(urlAddress); // Update UI
+          fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(urlAddress)}&countrycodes=us&limit=1`, {
+            headers: { 'User-Agent': 'CropDashboard/1.0' }
+          })
+          .then(res => res.json())
+          .then(data => {
+            if (data && data.length > 0) {
+              const lat = parseFloat(data[0].lat); 
+              const lon = parseFloat(data[0].lon);
+              
+              if(marker.current) marker.current.remove();
+              marker.current = new window.maplibregl.Marker({ color: '#ef4444' }).setLngLat([lon, lat]).addTo(map.current);
+              
+              // We are inside map.on('load'), so flyTo is safe now
+              map.current.flyTo({ center: [lon, lat], zoom: 15, duration: 2000 });
+            }
+          })
+          .catch(e => console.error("Auto-zoom failed", e));
+        }
       });
     };
 
@@ -253,43 +278,6 @@ const CropDashboard = () => {
       isMounted = false;
       if (map.current) { map.current.remove(); map.current = null; mapInitialized.current = false; }
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // --- 4. AUTO-ZOOM TO URL ADDRESS (New & Improved) ---
-// --- 4. AUTO-ZOOM TO URL ADDRESS (Improved with Polling) ---
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const urlAddress = params.get('Address');
-
-    if (urlAddress) {
-      setAddress(urlAddress); // Fill visual input
-
-      // Fetch suggestion immediately
-      fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(urlAddress)}&countrycodes=us&limit=1`, {
-        headers: { 'User-Agent': 'CropDashboard/1.0' }
-      })
-      .then(res => res.json())
-      .then(data => {
-        if (data && data.length > 0) {
-          const bestMatch = data[0];
-          
-          // Poll every 200ms until the map is fully loaded
-          const waitForMap = setInterval(() => {
-            // Check if map instance exists AND has finished loading initial style
-            if (map.current && map.current.isStyleLoaded()) {
-              console.log("Map ready, flying to:", bestMatch.display_name);
-              selectSuggestion(bestMatch);
-              clearInterval(waitForMap);
-            }
-          }, 200);
-
-          // Stop trying after 10 seconds to prevent infinite loops
-          setTimeout(() => clearInterval(waitForMap), 10000);
-        }
-      })
-      .catch(e => console.error("Auto-zoom failed", e));
-    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
