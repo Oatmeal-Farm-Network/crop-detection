@@ -1,70 +1,117 @@
-# Getting Started with Create React App
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
 
-## Available Scripts
+# 🌾 Crop & Soil Analytics Dashboard
 
-In the project directory, you can run:
+A high-performance, responsive React application for analyzing agricultural field data. This dashboard visualizes crop types using vector tiles, provides real-time soil health analysis, and generates fertilizer recommendations based on Azure backend data.
 
-### `npm start`
+*(Replace this link with your actual screenshot URL later)*
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+## 🚀 Features
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+  * **Interactive Map Visualization:** Renders 2022 USDA crop data using MapLibre GL and PMTiles for high performance (handling millions of vector points).
+  * **Field Analysis:** Click on any field to retrieve granular data including:
+      * **Soil Health Score:** Calculated based on pH, Nitrogen, and Organic Carbon levels.
+      * **Fertilizer Plan:** AI-generated recommendations for nutrient application.
+      * **Crop Rotation History:** Historical timeline of crops grown on the plot.
+  * **Location Search:** Integrated OpenStreetMap (Nominatim) search with ranking algorithms for accurate address finding.
+  * **Mobile-First Design:** Fully responsive UI with a bottom-sheet drawer for mobile users and a sidebar for desktop users.
+  * **Performance Optimized:** Uses custom memory management to run smoothly on devices with limited RAM.
 
-### `npm test`
+## 🛠️ Tech Stack
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+  * **Frontend:** React.js, CSS3 (Custom responsive layout)
+  * **Mapping:** MapLibre GL JS, PMTiles Protocol
+  * **Icons:** Lucide React
+  * **Deployment:** Docker, Nginx, Azure Web Apps
+  * **Data Source:** USDA Cropland Data Layer (hosted on Azure Blob Storage)
 
-### `npm run build`
+## 📋 Prerequisites
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+Before you begin, ensure you have the following installed:
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+  * [Node.js](https://nodejs.org/) (v16 or higher)
+  * [Docker](https://www.docker.com/) (for containerization)
+  * [Git](https://git-scm.com/)
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+## ⚡ Getting Started (Local Development)
 
-### `npm run eject`
+Follow these steps to run the application on your local machine.
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+### 1\. Clone the Repository
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+```bash
+git clone https://github.com/YOUR_USERNAME/REPO_NAME.git
+cd REPO_NAME/src/crop-detection
+```
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
+### 2\. Install Dependencies
 
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
+```bash
+npm install
+```
 
-## Learn More
+### 3\. Run the Development Server
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+```bash
+# If using Create React App
+npm start
 
-To learn React, check out the [React documentation](https://reactjs.org/).
+# If using Vite
+npm run dev
+```
 
-### Code Splitting
+Open [http://localhost:3000](https://www.google.com/search?q=http://localhost:3000) (or the port shown in your terminal) to view it in the browser.
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
+## 🐳 Docker Deployment
 
-### Analyzing the Bundle Size
+This project includes a multi-stage `Dockerfile` optimized for production (using Nginx).
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
+### 1\. Build the Docker Image
 
-### Making a Progressive Web App
+Run this command from inside the `src/crop-detection` folder:
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
+```bash
+docker build -t crop-analytics-frontend .
+```
 
-### Advanced Configuration
+### 2\. Run the Container
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
+```bash
+docker run -p 8080:80 crop-analytics-frontend
+```
 
-### Deployment
+The app will be accessible at `http://localhost:8080`.
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
+## 📂 Project Structure
 
-### `npm run build` fails to minify
+```text
+src/crop-detection/
+├── public/             # Static assets
+├── src/
+│   ├── components/     # Reusable UI components
+│   ├── App.jsx         # Main application logic & Map setup
+│   ├── App.css         # Global styles & responsive definitions
+│   └── index.js        # Entry point
+├── Dockerfile          # Multi-stage build configuration
+├── nginx.conf          # Nginx server configuration for React Router
+├── package.json        # Dependencies and scripts
+└── README.md           # Project documentation
+```
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+## ☁️ Deployment to Azure
+
+This project is configured for continuous deployment via GitHub Actions or Azure App Service.
+
+1.  **Push to GitHub:** Ensure your Dockerfile is committed.
+2.  **Create Web App:** In Azure Portal, create a "Web App for Containers".
+3.  **Source:** Connect your GitHub repository.
+4.  **Context:** Set the Docker build context to `src/crop-detection`.
+
+## 🤝 Contributing
+
+1.  Fork the repository.
+2.  Create your feature branch (`git checkout -b feature/AmazingFeature`).
+3.  Commit your changes (`git commit -m 'Add some AmazingFeature'`).
+4.  Push to the branch (`git push origin feature/AmazingFeature`).
+5.  Open a Pull Request.
+
