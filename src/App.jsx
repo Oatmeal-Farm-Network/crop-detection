@@ -257,6 +257,7 @@ const CropDashboard = () => {
   }, []);
 
   // --- 4. AUTO-ZOOM TO URL ADDRESS (New & Improved) ---
+// --- 4. AUTO-ZOOM TO URL ADDRESS (Improved with Polling) ---
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const urlAddress = params.get('Address');
@@ -273,22 +274,24 @@ const CropDashboard = () => {
         if (data && data.length > 0) {
           const bestMatch = data[0];
           
-          // Poll until the map is ready, then Fly!
+          // Poll every 200ms until the map is fully loaded
           const waitForMap = setInterval(() => {
-            if (map.current && map.current.loaded()) {
-              selectSuggestion(bestMatch); // Trigger the zoom and marker
+            // Check if map instance exists AND has finished loading initial style
+            if (map.current && map.current.isStyleLoaded()) {
+              console.log("Map ready, flying to:", bestMatch.display_name);
+              selectSuggestion(bestMatch);
               clearInterval(waitForMap);
             }
           }, 200);
 
-          // Timeout after 10s to stop checking
+          // Stop trying after 10 seconds to prevent infinite loops
           setTimeout(() => clearInterval(waitForMap), 10000);
         }
       })
       .catch(e => console.error("Auto-zoom failed", e));
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); 
+  }, []);
 
   return (
     <div className="app-root">
