@@ -35,10 +35,10 @@ jobs:
         uses: azure/container-apps-deploy-action@v1
         with:
           appSourcePath: ${{ github.workspace }} 
-          acrName: cropdetecton
+          acrName: cropdetection
           containerAppName: cropdetection
           resourceGroup: MyAgentResourceGroup
           
           # This matches the image we just pushed above
-          imageToDeploy: cropdetecton.azurecr.io/crop-analytics-frontend:${{ github.sha }}
+          imageToDeploy: cropdetection.azurecr.io/crop-analytics-frontend:${{ github.sha }}
           targetPort: 80
