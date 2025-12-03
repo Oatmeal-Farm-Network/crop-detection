@@ -108,21 +108,99 @@ const CropDashboard = () => {
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  // --- 2. URL QUERY STRING LISTENER (NEW & CORRECTLY PLACED) ---
-  useEffect(() => {
-    // This runs once when the app loads
-    const params = new URLSearchParams(window.location.search);
-    const urlAddress = params.get('Address'); // Reads ?Address=...
-    
-    if (urlAddress) {
-      setAddress(urlAddress);
-      // Trigger the search logic immediately
-      handleAddressChange(urlAddress);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // --- 2. CORE FUNCTIONS (Defined before effects) ---
 
-  // --- 3. MAP INITIALIZATION ---
+  const fetchAnalysisFromAzure = async (lat, lon, cropName, currentProps) => {
+    setLoading(true); setShowAnalytics(true);
+    if (isMobile) setIsMobileMenuOpen(false);
+
+    try {
+      const response = await fetch(`${API_ENDPOINT}?lat=${lat}&lon=${lon}`);
+      if (!response.ok) throw new Error(`Server Error: ${response.statusText}`);
+      const data = await response.json();
+      const history = data.history || {};
+      history[CURRENT_YEAR] = { crop: cropName, code: currentProps.CROP_TYPE, acres: currentProps.CSBACRES };
+      
+      setFieldData({
+        cropName: cropName, county: currentProps.CNTY, acres: currentProps.CSBACRES,
+        history: history, soil: data.soil, recommendations: data.recommendations || [], 
+        texture: getTextureClass(data.soil?.sand, data.soil?.clay),
+        healthData: getHealthScore(data.soil), fertilizerPlan: getFertilizerPlan(data.soil), location: { lat, lon }
+      });
+    } catch (error) {
+      console.error("Analysis Error:", error);
+      alert("Analysis failed.");
+    } finally { setLoading(false); }
+  };
+
+  const handleMapClick = useCallback((e) => {
+    if (!map.current) return;
+    if (!e.features || !e.features[0]) return;
+    
+    const props = e.features[0].properties;
+    const lat = e.lngLat.lat;
+    const lon = e.lngLat.lng;
+    const cropName = CROP_LOOKUP[props.CROP_TYPE] || "Unknown";
+    const acres = props.CSBACRES ? parseFloat(props.CSBACRES).toFixed(2) : "N/A";
+
+    if (popup.current) popup.current.remove();
+
+    popup.current = new window.maplibregl.Popup({ closeButton: true, maxWidth: '320px', className: 'custom-popup' })
+      .setLngLat(e.lngLat)
+      .setHTML(`
+        <div style="padding:16px; font-family:system-ui, -apple-system, sans-serif;">
+          <h3 style="margin:0 0 12px 0; color:#1e293b; font-size:18px; font-weight:700;">${cropName}</h3>
+          <div style="display:flex; flex-direction:column; gap:6px; font-size:13px; color:#64748b; margin-bottom:16px;">
+            <div><strong style="color:#475569;">Acres:</strong> ${acres}</div>
+            <div><strong style="color:#475569;">County:</strong> ${props.CNTY || 'N/A'}</div>
+          </div>
+          <button id="analyze-btn" style="width:100%; padding:12px 16px; background:#1e40af; color:white; border:none; border-radius:8px; cursor:pointer; font-weight:600; font-size:14px;">Run Field Analysis</button>
+        </div>
+      `)
+      .addTo(map.current);
+    
+    requestAnimationFrame(() => {
+        const btn = document.getElementById('analyze-btn');
+        if(btn) btn.onclick = (event) => { event.preventDefault(); fetchAnalysisFromAzure(lat, lon, cropName, props); };
+    });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleAddressChange = (val) => {
+    setAddress(val);
+    if (val.length < 3) { setShowSuggestions(false); return; }
+    if (searchTimeout.current) clearTimeout(searchTimeout.current);
+    setIsSearching(true);
+    
+    searchTimeout.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(val)}&countrycodes=us&limit=8&addressdetails=1`, { headers: { 'User-Agent': 'CropDashboard/1.0' } });
+        const data = await res.json();
+        const ranked = Array.isArray(data) ? data.map(item => {
+          let score = 0;
+          if (item.display_name.toLowerCase().startsWith(val.toLowerCase())) score += 100;
+          return { ...item, rankScore: score };
+        }).sort((a, b) => b.rankScore - a.rankScore).slice(0, 5) : [];
+        setSuggestions(ranked);
+        setShowSuggestions(ranked.length > 0);
+      } catch(e) { setSuggestions([]); } finally { setIsSearching(false); }
+    }, 400);
+  };
+
+  const selectSuggestion = (sug) => {
+    setAddress(sug.display_name.split(',')[0]); 
+    setShowSuggestions(false);
+    if (!map.current) return;
+
+    const lat = parseFloat(sug.lat); 
+    const lon = parseFloat(sug.lon);
+    
+    if(marker.current) marker.current.remove();
+    marker.current = new window.maplibregl.Marker({ color: '#ef4444' }).setLngLat([lon, lat]).addTo(map.current);
+    map.current.flyTo({ center: [lon, lat], zoom: 15, duration: 2000 });
+    if (isMobile) setIsMobileMenuOpen(false);
+  };
+
+  // --- 3. MAP INITIALIZATION EFFECT ---
   useEffect(() => {
     let isMounted = true;
 
@@ -178,95 +256,39 @@ const CropDashboard = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleMapClick = useCallback((e) => {
-    if (!map.current) return;
-    if (!e.features || !e.features[0]) return;
-    
-    const props = e.features[0].properties;
-    const lat = e.lngLat.lat;
-    const lon = e.lngLat.lng;
-    const cropName = CROP_LOOKUP[props.CROP_TYPE] || "Unknown";
-    const acres = props.CSBACRES ? parseFloat(props.CSBACRES).toFixed(2) : "N/A";
+  // --- 4. AUTO-ZOOM TO URL ADDRESS (New & Improved) ---
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const urlAddress = params.get('Address');
 
-    if (popup.current) popup.current.remove();
+    if (urlAddress) {
+      setAddress(urlAddress); // Fill visual input
 
-    popup.current = new window.maplibregl.Popup({ closeButton: true, maxWidth: '320px', className: 'custom-popup' })
-      .setLngLat(e.lngLat)
-      .setHTML(`
-        <div style="padding:16px; font-family:system-ui, -apple-system, sans-serif;">
-          <h3 style="margin:0 0 12px 0; color:#1e293b; font-size:18px; font-weight:700;">${cropName}</h3>
-          <div style="display:flex; flex-direction:column; gap:6px; font-size:13px; color:#64748b; margin-bottom:16px;">
-            <div><strong style="color:#475569;">Acres:</strong> ${acres}</div>
-            <div><strong style="color:#475569;">County:</strong> ${props.CNTY || 'N/A'}</div>
-          </div>
-          <button id="analyze-btn" style="width:100%; padding:12px 16px; background:#1e40af; color:white; border:none; border-radius:8px; cursor:pointer; font-weight:600; font-size:14px;">Run Field Analysis</button>
-        </div>
-      `)
-      .addTo(map.current);
-    
-    requestAnimationFrame(() => {
-        const btn = document.getElementById('analyze-btn');
-        if(btn) btn.onclick = (event) => { event.preventDefault(); fetchAnalysisFromAzure(lat, lon, cropName, props); };
-    });
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+      // Fetch suggestion immediately
+      fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(urlAddress)}&countrycodes=us&limit=1`, {
+        headers: { 'User-Agent': 'CropDashboard/1.0' }
+      })
+      .then(res => res.json())
+      .then(data => {
+        if (data && data.length > 0) {
+          const bestMatch = data[0];
+          
+          // Poll until the map is ready, then Fly!
+          const waitForMap = setInterval(() => {
+            if (map.current && map.current.loaded()) {
+              selectSuggestion(bestMatch); // Trigger the zoom and marker
+              clearInterval(waitForMap);
+            }
+          }, 200);
 
-  const fetchAnalysisFromAzure = async (lat, lon, cropName, currentProps) => {
-    setLoading(true); setShowAnalytics(true);
-    if (isMobile) setIsMobileMenuOpen(false);
-
-    try {
-      const response = await fetch(`${API_ENDPOINT}?lat=${lat}&lon=${lon}`);
-      if (!response.ok) throw new Error(`Server Error: ${response.statusText}`);
-      const data = await response.json();
-      const history = data.history || {};
-      history[CURRENT_YEAR] = { crop: cropName, code: currentProps.CROP_TYPE, acres: currentProps.CSBACRES };
-      
-      setFieldData({
-        cropName: cropName, county: currentProps.CNTY, acres: currentProps.CSBACRES,
-        history: history, soil: data.soil, recommendations: data.recommendations || [], 
-        texture: getTextureClass(data.soil?.sand, data.soil?.clay),
-        healthData: getHealthScore(data.soil), fertilizerPlan: getFertilizerPlan(data.soil), location: { lat, lon }
-      });
-    } catch (error) {
-      console.error("Analysis Error:", error);
-      alert("Analysis failed.");
-    } finally { setLoading(false); }
-  };
-
-  const handleAddressChange = (val) => {
-    setAddress(val);
-    if (val.length < 3) { setShowSuggestions(false); return; }
-    if (searchTimeout.current) clearTimeout(searchTimeout.current);
-    setIsSearching(true);
-    
-    searchTimeout.current = setTimeout(async () => {
-      try {
-        const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(val)}&countrycodes=us&limit=8&addressdetails=1`, { headers: { 'User-Agent': 'CropDashboard/1.0' } });
-        const data = await res.json();
-        const ranked = Array.isArray(data) ? data.map(item => {
-          let score = 0;
-          if (item.display_name.toLowerCase().startsWith(val.toLowerCase())) score += 100;
-          return { ...item, rankScore: score };
-        }).sort((a, b) => b.rankScore - a.rankScore).slice(0, 5) : [];
-        setSuggestions(ranked);
-        setShowSuggestions(ranked.length > 0);
-      } catch(e) { setSuggestions([]); } finally { setIsSearching(false); }
-    }, 400);
-  };
-
-  const selectSuggestion = (sug) => {
-    setAddress(sug.display_name.split(',')[0]); 
-    setShowSuggestions(false);
-    if (!map.current) return;
-
-    const lat = parseFloat(sug.lat); 
-    const lon = parseFloat(sug.lon);
-    
-    if(marker.current) marker.current.remove();
-    marker.current = new window.maplibregl.Marker({ color: '#ef4444' }).setLngLat([lon, lat]).addTo(map.current);
-    map.current.flyTo({ center: [lon, lat], zoom: 15, duration: 2000 });
-    if (isMobile) setIsMobileMenuOpen(false);
-  };
+          // Timeout after 10s to stop checking
+          setTimeout(() => clearInterval(waitForMap), 10000);
+        }
+      })
+      .catch(e => console.error("Auto-zoom failed", e));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); 
 
   return (
     <div className="app-root">
