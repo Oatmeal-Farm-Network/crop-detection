@@ -97,50 +97,21 @@ const CropDashboard = () => {
   const popup = useRef(null);
   const mapInitialized = useRef(false);
 
-  // ✅ UPDATED CROP LIST (Includes Orchards)
   const CROP_LOOKUP = { 
-    1: 'Corn', 
-    4: 'Sorghum', 
-    5: 'Soybeans', 
-    24: 'Winter Wheat', 
-    36: 'Alfalfa', 
-    43: 'Potatoes', 
-    61: 'Fallow', 
-    176: 'Grassland',
-    204: 'Pistachios', 
-    212: 'Oranges', 
-    75: 'Almonds',
-    // New Orchard Crops
-    66: 'Cherries',
-    67: 'Peaches',
-    68: 'Apples',
-    69: 'Grapes',
-    76: 'Walnuts',
-    77: 'Pears',
-    223: 'Apricots'
+    1: 'Corn', 4: 'Sorghum', 5: 'Soybeans', 24: 'Winter Wheat', 
+    36: 'Alfalfa', 43: 'Potatoes', 61: 'Fallow', 176: 'Grassland',
+    204: 'Pistachios', 212: 'Oranges', 75: 'Almonds',
+    66: 'Cherries', 67: 'Peaches', 68: 'Apples', 69: 'Grapes',
+    76: 'Walnuts', 77: 'Pears', 223: 'Apricots'
   };
   
-  // ✅ UPDATED COLORS (Distinct colors for orchards)
   const cropColors = { 
-    '1': '#F4D03F',   // Corn
-    '5': '#229954',   // Soybeans
-    '24': '#A04000',  // Wheat
-    '36': '#2ECC71',  // Alfalfa
-    '176': '#CDDC39', // Grassland
-    '43': '#FFCC80',  // Potatoes
-    '75': '#D7CCC8',  // Almonds
-    '61': '#BDBDBD',  // Fallow
-    // Orchards
-    '66': '#C2185B',  // Cherries (Pink)
-    '67': '#FFAB91',  // Peaches (Peach)
-    '68': '#D32F2F',  // Apples (Red)
-    '69': '#7B1FA2',  // Grapes (Purple)
-    '76': '#795548',  // Walnuts (Brown)
-    '77': '#AED581',  // Pears (Light Green)
-    '223': '#FFCA28'  // Apricots (Yellow-Orange)
+    '1': '#F4D03F', '5': '#229954', '24': '#A04000', '36': '#2ECC71', 
+    '176': '#CDDC39', '43': '#FFCC80', '75': '#D7CCC8', '61': '#BDBDBD', 
+    '66': '#C2185B', '67': '#FFAB91', '68': '#D32F2F', '69': '#7B1FA2', 
+    '76': '#795548', '77': '#AED581', '223': '#FFCA28'
   };
 
-  // --- 1. RESIZE LISTENER ---
   useEffect(() => {
     const checkMobile = () => setIsMobile(window.innerWidth < 768);
     checkMobile();
@@ -148,9 +119,9 @@ const CropDashboard = () => {
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  // --- 2. CORE FUNCTIONS ---
   const fetchAnalysisFromAzure = async (lat, lon, cropName, currentProps) => {
-    setLoading(true); setShowAnalytics(true);
+    setLoading(true); 
+    setShowAnalytics(true);
     if (isMobile) setIsMobileMenuOpen(false);
 
     try {
@@ -160,6 +131,15 @@ const CropDashboard = () => {
       const history = data.history || {};
       history[CURRENT_YEAR] = { crop: cropName, code: currentProps.CROP_TYPE, acres: currentProps.CSBACRES };
       
+      // ✅ CRASH FIX: Calculate Silt if missing
+      // If the API returns sand/clay but no silt, we must calculate it manually
+      // Silt = 100% - Sand% - Clay%
+      if (data.soil && data.soil.silt === undefined) {
+        data.soil.silt = 100 - (data.soil.sand || 0) - (data.soil.clay || 0);
+        // Clamp to 0 just in case of rounding errors
+        if (data.soil.silt < 0) data.soil.silt = 0;
+      }
+
       setFieldData({
         cropName: cropName, county: currentProps.CNTY, acres: currentProps.CSBACRES,
         history: history, soil: data.soil, recommendations: data.recommendations || [], 
@@ -174,9 +154,11 @@ const CropDashboard = () => {
 
   const handleMapClick = useCallback((e) => {
     if (!map.current) return;
-    if (!e.features || !e.features[0]) return;
+    // Query the visual layer to get properties
+    const features = map.current.queryRenderedFeatures(e.point, { layers: ['visual-layer'] });
+    if (!features || !features[0]) return;
     
-    const props = e.features[0].properties;
+    const props = features[0].properties;
     const lat = e.lngLat.lat;
     const lon = e.lngLat.lng;
     const cropName = CROP_LOOKUP[props.CROP_TYPE] || "Unknown";
@@ -184,25 +166,44 @@ const CropDashboard = () => {
 
     if (popup.current) popup.current.remove();
 
+    // Create popup content
+    const popupContent = document.createElement('div');
+    popupContent.style.padding = '16px';
+    popupContent.style.fontFamily = 'system-ui, -apple-system, sans-serif';
+    popupContent.innerHTML = `
+        <h3 style="margin:0 0 12px 0; color:#1e293b; font-size:18px; font-weight:700;">${cropName}</h3>
+        <div style="display:flex; flex-direction:column; gap:6px; font-size:13px; color:#64748b; margin-bottom:16px;">
+        <div><strong style="color:#475569;">Acres:</strong> ${acres}</div>
+        <div><strong style="color:#475569;">County:</strong> ${props.CNTY || 'N/A'}</div>
+        </div>
+    `;
+
+    // Create Button Element (Safer than string HTML)
+    const btn = document.createElement('button');
+    btn.innerText = "Run Field Analysis";
+    btn.style.width = '100%';
+    btn.style.padding = '12px 16px';
+    btn.style.background = '#1e40af';
+    btn.style.color = 'white';
+    btn.style.border = 'none';
+    btn.style.borderRadius = '8px';
+    btn.style.cursor = 'pointer';
+    btn.style.fontWeight = '600';
+    btn.style.fontSize = '14px';
+    
+    // Attach event listener directly to element
+    btn.onclick = (event) => {
+        event.preventDefault(); // Prevent weird map jumps
+        fetchAnalysisFromAzure(lat, lon, cropName, props);
+    };
+
+    popupContent.appendChild(btn);
+
     popup.current = new window.maplibregl.Popup({ closeButton: true, maxWidth: '320px', className: 'custom-popup' })
       .setLngLat(e.lngLat)
-      .setHTML(`
-        <div style="padding:16px; font-family:system-ui, -apple-system, sans-serif;">
-          <h3 style="margin:0 0 12px 0; color:#1e293b; font-size:18px; font-weight:700;">${cropName}</h3>
-          <div style="display:flex; flex-direction:column; gap:6px; font-size:13px; color:#64748b; margin-bottom:16px;">
-            <div><strong style="color:#475569;">Acres:</strong> ${acres}</div>
-            <div><strong style="color:#475569;">County:</strong> ${props.CNTY || 'N/A'}</div>
-          </div>
-          <button id="analyze-btn" style="width:100%; padding:12px 16px; background:#1e40af; color:white; border:none; border-radius:8px; cursor:pointer; font-weight:600; font-size:14px;">Run Field Analysis</button>
-        </div>
-      `)
+      .setDOMContent(popupContent)
       .addTo(map.current);
-    
-    requestAnimationFrame(() => {
-        const btn = document.getElementById('analyze-btn');
-        if(btn) btn.onclick = (event) => { event.preventDefault(); fetchAnalysisFromAzure(lat, lon, cropName, props); };
-    });
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleAddressChange = (val) => {
     setAddress(val);
@@ -239,7 +240,6 @@ const CropDashboard = () => {
     if (isMobile) setIsMobileMenuOpen(false);
   };
 
-  // --- 3. MAP INITIALIZATION ---
   useEffect(() => {
     let isMounted = true;
 
@@ -251,8 +251,10 @@ const CropDashboard = () => {
       if (!window.maplibregl || !window.pmtiles) return;
 
       if (!window.maplibregl.config?.REGISTERED_PROTOCOLS?.pmtiles) {
-         const protocol = new window.pmtiles.Protocol();
-         window.maplibregl.addProtocol("pmtiles", protocol.tile);
+         try {
+             const protocol = new window.pmtiles.Protocol();
+             window.maplibregl.addProtocol("pmtiles", protocol.tile);
+         } catch (e) { console.log("Protocol likely already added"); }
       }
 
       mapInitialized.current = true;
@@ -282,11 +284,10 @@ const CropDashboard = () => {
           paint: { "fill-color": [ "match", ["to-string", ["get", "CROP_TYPE"]], ...Object.entries(cropColors).flat(), "rgba(0, 0, 0, 0)" ], "fill-opacity": 0.75 }
         });
         
-        map.current.on('click', 'visual-layer', handleMapClick);
+        map.current.on('click', handleMapClick); // Use map click, then query features
         map.current.on('mousemove', 'visual-layer', () => { if (map.current) map.current.getCanvas().style.cursor = 'pointer'; });
         map.current.on('mouseleave', 'visual-layer', () => { if (map.current) map.current.getCanvas().style.cursor = ''; });
 
-        // ✅ AUTO-ZOOM (Wait for map readiness)
         const params = new URLSearchParams(window.location.search);
         const urlAddress = params.get('Address');
         
@@ -323,7 +324,6 @@ const CropDashboard = () => {
       isMounted = false;
       if (map.current) { map.current.remove(); map.current = null; mapInitialized.current = false; }
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
@@ -429,6 +429,7 @@ const CropDashboard = () => {
                   </svg>
                   <div className="pie-legend">
                     <div className="pie-legend-item"><span className="pie-dot" style={{background: '#f59e0b'}}></span><span>Sand: {fieldData.soil.sand.toFixed(1)}%</span></div>
+                    {/* ✅ CRASH FIX: Silt is now guaranteed to exist */}
                     <div className="pie-legend-item"><span className="pie-dot" style={{background: '#a16207'}}></span><span>Silt: {fieldData.soil.silt.toFixed(1)}%</span></div>
                     <div className="pie-legend-item"><span className="pie-dot" style={{background: '#78350f'}}></span><span>Clay: {fieldData.soil.clay.toFixed(1)}%</span></div>
                   </div>
