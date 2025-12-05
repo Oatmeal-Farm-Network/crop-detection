@@ -6,7 +6,7 @@ import {
   Menu, ArrowLeft
 } from 'lucide-react';
 
-// ✅ CONFIGURATION: Update this URL if your backend URL changes
+// ✅ CONFIGURATION
 const API_ENDPOINT = "https://crop-detection-dcecevhvh5ard2ah.eastus-01.azurewebsites.net/api/analyze_field";
 const CURRENT_YEAR = 2022;
 const PMTILES_2022 = "pmtiles://https://satelliteimages.blob.core.windows.net/pmt-tiles/crop_2022.pmtiles";
@@ -52,19 +52,17 @@ const loadMapResources = () => {
 const getTextureClass = (sand, clay) => {
   const s = sand || 0;
   const c = clay || 0;
-  
   if (s + c === 0) return "Unknown";
   if (c >= 40) return "Clay";
   if (s > 45) return "Sandy Loam";
   return "Loam";
 };
 
-// ✅ ROBUST HEALTH SCORE CALCULATION
+// ✅ FIX: Return NULL if soil data is missing (stops the 0 score issue)
 const getHealthScore = (soil) => {
-  if (!soil) return { score: 0, issues: [], strengths: [] };
+  if (!soil || !soil.ph) return null;
   
-  // Use logical OR (|| 0) to ensure values are numbers for safe comparison
-  const ph = soil.ph || 0;
+  const ph = soil.ph;
   const soc = soil.soc || 0;
   const nitrogen = soil.nitrogen || 0;
 
@@ -72,30 +70,12 @@ const getHealthScore = (soil) => {
   const issues = [];
   const strengths = [];
 
-  // 1. pH Check
-  if (ph < 6.0) { 
-      score -= 15; 
-      issues.push({ message: `Acidic Soil (pH ${ph.toFixed(1)})`, severity: "medium" }); 
-  } else if (ph > 7.5) { 
-      score -= 15; 
-      issues.push({ message: `Alkaline Soil (pH ${ph.toFixed(1)})`, severity: "medium" }); 
-  } else { 
-      strengths.push({ message: "pH is in optimal range" }); 
-  }
+  if (ph < 6.0) { score -= 15; issues.push({ message: `Acidic Soil (pH ${ph.toFixed(1)})`, severity: "medium" }); } 
+  else if (ph > 7.5) { score -= 15; issues.push({ message: `Alkaline Soil (pH ${ph.toFixed(1)})`, severity: "medium" }); } 
+  else { strengths.push({ message: "pH is in optimal range" }); }
 
-  // 2. SOC Check
-  if (soc < 15) { 
-      score -= 20; 
-      issues.push({ message: "Low organic matter", severity: "high" }); 
-  } else { 
-      strengths.push({ message: "Good organic matter" }); 
-  }
-
-  // 3. Nitrogen Check
-  if (nitrogen < 2.0) { 
-      score -= 15; 
-      issues.push({ message: "Low Nitrogen", severity: "medium" }); 
-  }
+  if (soc < 15) { score -= 20; issues.push({ message: "Low organic matter", severity: "high" }); } else { strengths.push({ message: "Good organic matter" }); }
+  if (nitrogen < 2.0) { score -= 15; issues.push({ message: "Low Nitrogen", severity: "medium" }); }
   
   return { score: Math.max(0, score), issues, strengths };
 };
@@ -103,7 +83,6 @@ const getHealthScore = (soil) => {
 const getFertilizerPlan = (soil) => {
   if (!soil) return [];
   const plan = [];
-  
   const ph = soil.ph || 0;
   const nitrogen = soil.nitrogen || 0;
   
@@ -132,7 +111,7 @@ const CropDashboard = () => {
   const popup = useRef(null);
   const mapInitialized = useRef(false);
 
-  // ✅ COMPREHENSIVE CROP LOOKUP
+  // ✅ FULL CROP LIST
   const CROP_LOOKUP = {
     1: 'Corn', 2: 'Cotton', 3: 'Rice', 4: 'Sorghum', 5: 'Soybeans', 6: 'Sunflower',
     10: 'Peanuts', 11: 'Tobacco', 12: 'Sweet Corn', 13: 'Pop/Orn Corn', 14: 'Mint',
@@ -190,7 +169,7 @@ const CropDashboard = () => {
       const history = data.history || {};
       history[CURRENT_YEAR] = { crop: cropName, code: currentProps.CROP_TYPE, acres: currentProps.CSBACRES };
       
-      // Fix missing silt
+      // ✅ CRASH FIX: Calculate Silt if missing
       if (data.soil && data.soil.silt === undefined) {
         data.soil.silt = 100 - (data.soil.sand || 0) - (data.soil.clay || 0);
         if (data.soil.silt < 0) data.soil.silt = 0;
@@ -439,7 +418,8 @@ const CropDashboard = () => {
               <div className="header-meta"><MapPinned size={14} /><span>{fieldData.location.lat.toFixed(4)}°, {fieldData.location.lon.toFixed(4)}°</span><span style={{margin:'0 4px'}}>•</span><span>{fieldData.acres} Acres</span></div>
             </div>
 
-            {fieldData.healthData && (
+            {/* ✅ FIXED: Only show Health Card if a score exists */}
+            {fieldData.healthData && fieldData.healthData.score !== null && (
               <div className="card health-card">
                 <div className="card-title"><Activity size={18} /><span>Soil Health Analysis</span></div>
                 <div className="health-content">
@@ -583,83 +563,9 @@ const CropDashboard = () => {
         .map-container { position: absolute; inset: 0; width: 100%; height: 100%; }
         .drawer { position: absolute; top: 0; right: 0; bottom: 0; width: 420px; background: white; box-shadow: -4px 0 20px rgba(0, 0, 0, 0.1); transform: translateX(100%); transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1); z-index: 30; display: flex; flex-direction: column; }
         .drawer.open { transform: translateX(0); }
-        .close-btn { position: absolute; top: 16px; right: 16px; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; background: white; border: 1px solid #e5e7eb; border-radius: 8px; cursor: pointer; color: #6b7280; z-index: 10; transition: all 0.2s; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1); }
-        .close-btn:hover { background: #f9fafb; border-color: #d1d5db; color: #374151; }
-        .loading-state { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: 40px; }
-        .loading-title { font-size: 16px; font-weight: 600; color: #1f2937; }
-        .loading-subtitle { font-size: 13px; color: #9ca3af; }
-        .spin { animation: spin 1s linear infinite; color: #3b82f6; }
-        @keyframes spin { 100% { transform: rotate(360deg); } }
-        .drawer-content { padding: 60px 24px 24px; overflow-y: auto; }
-        .drawer-header { margin-bottom: 24px; }
-        .header-top { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
-        .crop-title { font-size: 26px; font-weight: 700; color: #111827; letter-spacing: -0.02em; }
-        .texture-badge { padding: 4px 12px; background: #f3f4f6; border-radius: 6px; font-size: 12px; font-weight: 600; color: #6b7280; }
-        .header-meta { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #9ca3af; }
-        .card { background: white; border: 1px solid #e5e7eb; border-radius: 12px; padding: 20px; margin-bottom: 16px; }
-        .card-title { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 16px; }
-        .health-card { background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%); border-color: #bae6fd; }
-        .health-content { display: flex; gap: 20px; }
-        .health-circle { width: 100px; height: 100px; border-radius: 50%; border: 6px solid; display: flex; flex-direction: column; align-items: center; justify-content: center; flex-shrink: 0; background: white; }
-        .health-score { font-size: 32px; font-weight: 800; color: #111827; line-height: 1; }
-        .health-label { font-size: 11px; color: #6b7280; font-weight: 600; margin-top: 4px; }
-        .health-details { flex: 1; display: flex; flex-direction: column; gap: 8px; }
-        .health-item { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 6px; font-size: 12px; line-height: 1.4; }
-        .health-item.success { background: #d1fae5; color: #065f46; }
-        .health-item.warning { background: #fef3c7; color: #92400e; }
-        .metrics-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
-        .metric-box { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 8px; }
-        .metric-icon { flex-shrink: 0; }
-        .metric-content { display: flex; flex-direction: column; gap: 4px; }
-        .metric-label { font-size: 11px; color: #9ca3af; font-weight: 500; }
-        .metric-value { font-size: 18px; font-weight: 700; color: #111827; }
-        .fertilizer-list { display: flex; flex-direction: column; gap: 16px; }
-        .fertilizer-item { padding: 16px; background: #fefce8; border: 1px solid #fde68a; border-radius: 8px; }
-        .fert-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
-        .fert-nutrient { font-size: 15px; font-weight: 700; color: #78350f; }
-        .priority-badge { padding: 4px 10px; border-radius: 4px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
-        .priority-badge.high { background: #fee2e2; color: #991b1b; }
-        .priority-badge.medium { background: #fed7aa; color: #9a3412; }
-        .fert-details { display: flex; gap: 16px; margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px dashed #fde68a; }
-        .fert-row { display: flex; flex-direction: column; gap: 2px; }
-        .fert-label { font-size: 10px; color: #b45309; text-transform: uppercase; font-weight: 600; }
-        .fert-value { font-size: 13px; font-weight: 700; color: #78350f; }
-        .fert-recommendation { font-size: 13px; color: #92400e; line-height: 1.5; }
-        .fert-timing { font-size: 12px; font-style: italic; color: #b45309; margin-top: 4px; }
-        .crop-recommendations { display: flex; flex-direction: column; gap: 10px; }
-        .crop-rec-item { display: flex; align-items: center; gap: 12px; padding: 12px; background: #f9fafb; border-radius: 8px; border: 1px solid #f3f4f6; }
-        .rec-rank { width: 24px; height: 24px; background: #1a237e; color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; flex-shrink: 0; }
-        .rec-info { flex: 1; display: flex; flex-direction: column; }
-        .rec-name { font-size: 14px; font-weight: 600; color: #1f2937; }
-        .rec-reason { font-size: 11px; color: #6b7280; }
-        .rec-score { padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: 700; }
-        .timeline { display: flex; flex-direction: column; gap: 8px; }
-        .timeline-item { display: flex; align-items: center; gap: 12px; }
-        .timeline-year { width: 36px; font-size: 12px; font-weight: 600; color: #9ca3af; flex-shrink: 0; }
-        .timeline-content { flex: 1; }
-        .timeline-bar { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; border-radius: 6px; font-size: 13px; font-weight: 500; color: #1f2937; }
-        .timeline-acres { font-size: 11px; font-weight: 400; opacity: 0.7; }
-        .composition-pie { display: flex; gap: 20px; align-items: center; justify-content: center; margin-bottom: 20px; }
-        .pie-chart { width: 120px; height: 120px; flex-shrink: 0; transform: rotate(-90deg); }
-        .pie-legend { display: flex; flex-direction: column; gap: 6px; }
-        .pie-legend-item { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #4b5563; font-weight: 500; }
-        .pie-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
-        .mobile-header { display: none; }
-        @media (max-width: 768px) {
-            .app-root { flex-direction: column; }
-            .mobile-header { display: flex; position: absolute; top: 0; left: 0; right: 0; height: 60px; background: linear-gradient(135deg, #1a237e 0%, #283593 100%); z-index: 50; align-items: center; justify-content: space-between; padding: 0 16px; box-shadow: 0 2px 10px rgba(0,0,0,0.2); }
-            .mobile-header button { background: none; border: none; cursor: pointer; color: white; display: flex; }
-            .mh-left { display: flex; align-items: center; gap: 10px; }
-            .mobile-title { color: white; font-weight: 700; font-size: 18px; }
-            .sidebar { position: absolute; top: 60px; left: 0; width: 100%; bottom: 0; transform: translateX(0); border-right: none; }
-            .sidebar.hidden { display: none; }
-            .mobile-sidebar { z-index: 40; }
-            .map-wrapper { position: absolute; top: 60px; left: 0; right: 0; bottom: 0; }
-            .drawer { width: 100%; height: 85%; top: auto; bottom: 0; transform: translateY(100%); border-radius: 16px 16px 0 0; box-shadow: 0 -4px 20px rgba(0,0,0,0.15); }
-            .drawer.open { transform: translateY(0); }
-            .close-btn { left: 16px; right: auto; top: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
-            .drawer-content { padding: 32px 24px; }
-            .custom-popup .maplibregl-popup-content { max-width: 260px !important; }
+        .close-btn { left: 16px; right: auto; top: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        .drawer-content { padding: 32px 24px; }
+        .custom-popup .maplibregl-popup-content { max-width: 260px !important; }
         }
       `}</style>
     </div>
