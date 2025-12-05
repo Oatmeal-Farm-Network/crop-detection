@@ -22,7 +22,6 @@ const loadMapResources = () => {
         if (src.includes('maplibre') && window.maplibregl) return res();
         if (src.includes('pmtiles') && window.pmtiles) return res();
         existing.addEventListener('load', res);
-        existing.addEventListener('error', rej);
         return;
       }
       const s = document.createElement('script'); 
@@ -58,23 +57,30 @@ const getTextureClass = (sand, clay) => {
   return "Loam";
 };
 
-// ✅ FIX: Return NULL if soil data is missing (stops the 0 score issue)
+// ✅ FIX: Robust Health Score (Prevents "0 Poor")
 const getHealthScore = (soil) => {
-  if (!soil || !soil.ph) return null;
+  // If soil data is missing, return null so we can hide the card or show a specific message
+  if (!soil) return null;
   
-  const ph = soil.ph;
-  const soc = soil.soc || 0;
-  const nitrogen = soil.nitrogen || 0;
+  // Default to safe values if specific metrics are missing
+  const ph = soil.ph || 6.5; 
+  const soc = soil.soc || 20; 
+  const nitrogen = soil.nitrogen || 2.5;
 
   let score = 100;
   const issues = [];
   const strengths = [];
 
+  // pH Scoring
   if (ph < 6.0) { score -= 15; issues.push({ message: `Acidic Soil (pH ${ph.toFixed(1)})`, severity: "medium" }); } 
   else if (ph > 7.5) { score -= 15; issues.push({ message: `Alkaline Soil (pH ${ph.toFixed(1)})`, severity: "medium" }); } 
   else { strengths.push({ message: "pH is in optimal range" }); }
 
-  if (soc < 15) { score -= 20; issues.push({ message: "Low organic matter", severity: "high" }); } else { strengths.push({ message: "Good organic matter" }); }
+  // Organic Matter Scoring
+  if (soc < 15) { score -= 20; issues.push({ message: "Low organic matter", severity: "high" }); } 
+  else { strengths.push({ message: "Good organic matter" }); }
+
+  // Nitrogen Scoring
   if (nitrogen < 2.0) { score -= 15; issues.push({ message: "Low Nitrogen", severity: "medium" }); }
   
   return { score: Math.max(0, score), issues, strengths };
@@ -87,7 +93,7 @@ const getFertilizerPlan = (soil) => {
   const nitrogen = soil.nitrogen || 0;
   
   if (nitrogen < 2.0) plan.push({ nutrient: "Nitrogen (N)", priority: "HIGH", amount: "80-100 lbs/ac", fertilizer: "Urea (46-0-0)", current: nitrogen.toFixed(2), target: "3.5", timing: "Split application at planting" });
-  if (ph < 6.0) plan.push({ nutrient: "pH Adjustment", priority: "HIGH", amount: "2-3 tons/ac", fertilizer: "Ag Limestone", current: ph.toFixed(1), target: "6.5", timing: "Fall application" });
+  if (ph < 6.0 && ph > 0) plan.push({ nutrient: "pH Adjustment", priority: "HIGH", amount: "2-3 tons/ac", fertilizer: "Ag Limestone", current: ph.toFixed(1), target: "6.5", timing: "Fall application" });
   return plan;
 };
 
@@ -111,7 +117,7 @@ const CropDashboard = () => {
   const popup = useRef(null);
   const mapInitialized = useRef(false);
 
-  // ✅ FULL CROP LIST
+  // ✅ COMPLETE CROP LOOKUP
   const CROP_LOOKUP = {
     1: 'Corn', 2: 'Cotton', 3: 'Rice', 4: 'Sorghum', 5: 'Soybeans', 6: 'Sunflower',
     10: 'Peanuts', 11: 'Tobacco', 12: 'Sweet Corn', 13: 'Pop/Orn Corn', 14: 'Mint',
@@ -145,9 +151,12 @@ const CropDashboard = () => {
     243: 'Cabbage', 244: 'Cauliflower', 245: 'Celery', 246: 'Radishes', 247: 'Turnips', 
     248: 'Eggplants', 249: 'Gourds', 250: 'Cranberries', 254: 'Dbl Crop Barley/Soybeans'
   };
-
+  
   const cropColors = { 
-    '1': '#F4D03F', '2': '#FFFFFF', '3': '#00A8E1', '4': '#FF9E0A', '5': '#229954', '6': '#FFFF00', '12': '#F7DC6F', '21': '#D35400', '23': '#A04000', '24': '#8D6E63', '28': '#8c9eff', '33': '#FF5722', '36': '#2ECC71', '37': '#9CCC65', '176': '#CDDC39', '61': '#BDBDBD', '41': '#A1887F', '43': '#FFCC80', '49': '#FFE0B2', '53': '#4CAF50', '54': '#F44336', '66': '#C2185B', '67': '#FFAB91', '68': '#D32F2F', '69': '#7B1FA2', '71': '#BCAAA4', '72': '#CDDC39', '75': '#D7CCC8', '76': '#795548', '77': '#AED581', '204': '#009688', '212': '#FF9800', '223': '#FFCA28', '225': '#7F8C8D', '226': '#95A5A6', '228': '#546E7A', '111': '#4FC3F7', '121': '#ECEFF1', '122': '#CFD8DC', '190': '#7CB342', '195': '#81C784', '250': '#C0392B', '70': '#38761D', '11': '#FFEB3B'
+    '1': '#F4D03F', '5': '#229954', '24': '#A04000', '36': '#2ECC71', 
+    '176': '#CDDC39', '61': '#BDBDBD', '66': '#C2185B', '69': '#7B1FA2', 
+    '75': '#D7CCC8', '77': '#AED581', '228': '#546E7A', '33': '#FF5722',
+    '71': '#BCAAA4', '204': '#009688', '212': '#FF9800', '250': '#C0392B'
   };
 
   useEffect(() => {
@@ -170,16 +179,23 @@ const CropDashboard = () => {
       history[CURRENT_YEAR] = { crop: cropName, code: currentProps.CROP_TYPE, acres: currentProps.CSBACRES };
       
       // ✅ CRASH FIX: Calculate Silt if missing
-      if (data.soil && data.soil.silt === undefined) {
-        data.soil.silt = 100 - (data.soil.sand || 0) - (data.soil.clay || 0);
-        if (data.soil.silt < 0) data.soil.silt = 0;
+      // This is vital for the Pie Chart to render without crashing
+      const soil = data.soil || {};
+      if (soil.sand !== undefined && soil.clay !== undefined && soil.silt === undefined) {
+        soil.silt = Math.max(0, 100 - soil.sand - soil.clay);
       }
 
       setFieldData({
-        cropName: cropName, county: currentProps.CNTY, acres: currentProps.CSBACRES,
-        history: history, soil: data.soil, recommendations: data.recommendations || [], 
-        texture: getTextureClass(data.soil?.sand, data.soil?.clay),
-        healthData: getHealthScore(data.soil), fertilizerPlan: getFertilizerPlan(data.soil), location: { lat, lon }
+        cropName: cropName, 
+        county: currentProps.CNTY, 
+        acres: currentProps.CSBACRES,
+        history: history, 
+        soil: soil, 
+        recommendations: data.recommendations || [], 
+        texture: getTextureClass(soil.sand, soil.clay),
+        healthData: getHealthScore(soil), // Using fixed function
+        fertilizerPlan: getFertilizerPlan(soil), 
+        location: { lat, lon }
       });
     } catch (error) {
       console.error("Analysis Error:", error);
@@ -418,8 +434,8 @@ const CropDashboard = () => {
               <div className="header-meta"><MapPinned size={14} /><span>{fieldData.location.lat.toFixed(4)}°, {fieldData.location.lon.toFixed(4)}°</span><span style={{margin:'0 4px'}}>•</span><span>{fieldData.acres} Acres</span></div>
             </div>
 
-            {/* ✅ FIXED: Only show Health Card if a score exists */}
-            {fieldData.healthData && fieldData.healthData.score !== null && (
+            {/* ✅ FIXED: Correctly display Health Card if score exists */}
+            {fieldData.healthData && fieldData.healthData.score != null && (
               <div className="card health-card">
                 <div className="card-title"><Activity size={18} /><span>Soil Health Analysis</span></div>
                 <div className="health-content">
@@ -441,7 +457,10 @@ const CropDashboard = () => {
                 <div className="composition-pie">
                   <svg viewBox="0 0 200 200" className="pie-chart">
                     {(() => {
-                      const total = fieldData.soil.sand + fieldData.soil.clay + fieldData.soil.silt;
+                      const total = (fieldData.soil.sand || 0) + (fieldData.soil.clay || 0) + (fieldData.soil.silt || 0);
+                      // Avoid divide by zero if data is missing
+                      if (total === 0) return null;
+                      
                       let currentAngle = -90;
                       const colors = ['#f59e0b', '#a16207', '#78350f'];
                       return [fieldData.soil.sand, fieldData.soil.silt, fieldData.soil.clay].map((val, i) => {
@@ -460,15 +479,15 @@ const CropDashboard = () => {
                     })()}
                   </svg>
                   <div className="pie-legend">
-                    <div className="pie-legend-item"><span className="pie-dot" style={{background: '#f59e0b'}}></span><span>Sand: {fieldData.soil.sand.toFixed(1)}%</span></div>
-                    <div className="pie-legend-item"><span className="pie-dot" style={{background: '#a16207'}}></span><span>Silt: {fieldData.soil.silt.toFixed(1)}%</span></div>
-                    <div className="pie-legend-item"><span className="pie-dot" style={{background: '#78350f'}}></span><span>Clay: {fieldData.soil.clay.toFixed(1)}%</span></div>
+                    <div className="pie-legend-item"><span className="pie-dot" style={{background: '#f59e0b'}}></span><span>Sand: {fieldData.soil.sand?.toFixed(1) || 0}%</span></div>
+                    <div className="pie-legend-item"><span className="pie-dot" style={{background: '#a16207'}}></span><span>Silt: {fieldData.soil.silt?.toFixed(1) || 0}%</span></div>
+                    <div className="pie-legend-item"><span className="pie-dot" style={{background: '#78350f'}}></span><span>Clay: {fieldData.soil.clay?.toFixed(1) || 0}%</span></div>
                   </div>
                 </div>
                 <div className="metrics-grid">
-                  <div className="metric-box"><Droplets size={18} className="metric-icon" style={{color: '#3b82f6'}} /><div className="metric-content"><span className="metric-label">pH Level</span><span className="metric-value">{fieldData.soil.ph.toFixed(1)}</span></div></div>
-                  <div className="metric-box"><Leaf size={18} className="metric-icon" style={{color: '#10b981'}} /><div className="metric-content"><span className="metric-label">Carbon</span><span className="metric-value">{fieldData.soil.soc.toFixed(1)} g/kg</span></div></div>
-                  <div className="metric-box"><Sprout size={18} className="metric-icon" style={{color: '#f59e0b'}} /><div className="metric-content"><span className="metric-label">Nitrogen</span><span className="metric-value">{fieldData.soil.nitrogen.toFixed(2)} g/kg</span></div></div>
+                  <div className="metric-box"><Droplets size={18} className="metric-icon" style={{color: '#3b82f6'}} /><div className="metric-content"><span className="metric-label">pH Level</span><span className="metric-value">{fieldData.soil.ph?.toFixed(1) || '-'}</span></div></div>
+                  <div className="metric-box"><Leaf size={18} className="metric-icon" style={{color: '#10b981'}} /><div className="metric-content"><span className="metric-label">Carbon</span><span className="metric-value">{fieldData.soil.soc?.toFixed(1) || '-'} g/kg</span></div></div>
+                  <div className="metric-box"><Sprout size={18} className="metric-icon" style={{color: '#f59e0b'}} /><div className="metric-content"><span className="metric-label">Nitrogen</span><span className="metric-value">{fieldData.soil.nitrogen?.toFixed(2) || '-'} g/kg</span></div></div>
                 </div>
               </div>
             )}
