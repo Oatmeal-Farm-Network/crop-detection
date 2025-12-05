@@ -6,31 +6,37 @@ import {
   Menu, ArrowLeft
 } from 'lucide-react';
 
+// ✅ CONFIGURATION
 const API_ENDPOINT = "https://crop-detection-dcecevhvh5ard2ah.eastus-01.azurewebsites.net/api/analyze_field";
 const CURRENT_YEAR = 2022;
 const PMTILES_2022 = "pmtiles://https://satelliteimages.blob.core.windows.net/pmt-tiles/crop_2022.pmtiles";
 
+// --- RESOURCE LOADER ---
 const loadMapResources = () => {
   return new Promise(async (resolve, reject) => {
     if (window.maplibregl && window.pmtiles) return resolve();
+
     const loadScript = (src) => new Promise((res, rej) => {
       const existing = document.querySelector(`script[src="${src}"]`);
       if (existing) {
         if (src.includes('maplibre') && window.maplibregl) return res();
         if (src.includes('pmtiles') && window.pmtiles) return res();
         existing.addEventListener('load', res);
+        existing.addEventListener('error', rej);
         return;
       }
       const s = document.createElement('script'); 
       s.src = src; s.async = true; s.onload = res; s.onerror = rej;
       document.head.appendChild(s);
     });
+
     const loadStyles = (href) => {
       if (document.querySelector(`link[href="${href}"]`)) return;
       const link = document.createElement('link');
       link.rel = 'stylesheet'; link.href = href;
       document.head.appendChild(link);
     };
+
     try {
       loadStyles('https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css');
       await Promise.all([
@@ -42,6 +48,7 @@ const loadMapResources = () => {
   });
 };
 
+// --- DATA HELPERS ---
 const getTextureClass = (sand, clay) => {
   const s = sand || 0;
   const c = clay || 0;
@@ -53,10 +60,10 @@ const getTextureClass = (sand, clay) => {
 
 // ✅ FIX: Robust Health Score (Prevents "0" Score Crash)
 const getHealthScore = (soil) => {
-  // Return null ONLY if soil is fully missing (backend fix prevents this mostly)
+  // If soil is missing, return null so we can handle it gracefully
   if (!soil) return null;
   
-  // Safe defaults ensure we can calculate a score even if one metric is null
+  // Use backend data OR safe defaults
   const ph = soil.ph || 6.5; 
   const soc = soil.soc || 20; 
   const nitrogen = soil.nitrogen || 2.5;
@@ -66,37 +73,61 @@ const getHealthScore = (soil) => {
   const strengths = [];
 
   // 1. pH Check
-  if (ph < 6.0) { score -= 15; issues.push({ message: `Acidic Soil (pH ${ph.toFixed(1)})`, severity: "medium" }); } 
-  else if (ph > 7.5) { score -= 15; issues.push({ message: `Alkaline Soil (pH ${ph.toFixed(1)})`, severity: "medium" }); } 
-  else { strengths.push({ message: "pH is in optimal range" }); }
+  if (ph < 6.0) { 
+      score -= 15; 
+      issues.push({ message: `Acidic Soil (pH ${ph.toFixed(1)})`, severity: "medium" }); 
+  } else if (ph > 7.5) { 
+      score -= 15; 
+      issues.push({ message: `Alkaline Soil (pH ${ph.toFixed(1)})`, severity: "medium" }); 
+  } else { 
+      strengths.push({ message: "pH is in optimal range" }); 
+  }
 
   // 2. SOC Check
-  if (soc < 15) { score -= 20; issues.push({ message: "Low organic matter", severity: "high" }); } 
-  else { strengths.push({ message: "Good organic matter" }); }
+  if (soc < 15) { 
+      score -= 20; 
+      issues.push({ message: "Low organic matter", severity: "high" }); 
+  } else { 
+      strengths.push({ message: "Good organic matter" }); 
+  }
 
   // 3. Nitrogen Check
-  if (nitrogen < 2.0) { score -= 15; issues.push({ message: "Low Nitrogen", severity: "medium" }); }
+  if (nitrogen < 2.0) { 
+      score -= 15; 
+      issues.push({ message: "Low Nitrogen", severity: "medium" }); 
+  }
   
-  // Ensure we return a valid number, never NaN or negative
   return { score: Math.max(0, score), issues, strengths };
 };
 
 const getFertilizerPlan = (soil) => {
   if (!soil) return [];
   const plan = [];
-  const ph = soil.ph || 6.5; // Safe default
-  const nitrogen = soil.nitrogen || 2.5; // Safe default
+  const ph = soil.ph || 6.5;
+  const nitrogen = soil.nitrogen || 2.5;
   
-  if (nitrogen < 2.0) plan.push({ nutrient: "Nitrogen (N)", priority: "HIGH", amount: "80-100 lbs/ac", fertilizer: "Urea (46-0-0)", current: nitrogen.toFixed(2), target: "3.5", timing: "Split application at planting" });
-  if (ph < 6.0) plan.push({ nutrient: "pH Adjustment", priority: "HIGH", amount: "2-3 tons/ac", fertilizer: "Ag Limestone", current: ph.toFixed(1), target: "6.5", timing: "Fall application" });
+  if (nitrogen < 2.0) plan.push({ 
+      nutrient: "Nitrogen (N)", priority: "HIGH", amount: "80-100 lbs/ac", 
+      fertilizer: "Urea (46-0-0)", current: nitrogen.toFixed(2), 
+      target: "3.5", timing: "Split application at planting" 
+  });
+  
+  if (ph < 6.0 && ph > 0) plan.push({ 
+      nutrient: "pH Adjustment", priority: "HIGH", amount: "2-3 tons/ac", 
+      fertilizer: "Ag Limestone", current: ph.toFixed(1), 
+      target: "6.5", timing: "Fall application" 
+  });
+  
   return plan;
 };
 
+// --- MAIN COMPONENT ---
 const CropDashboard = () => {
   const [address, setAddress] = useState('');
   const [suggestions, setSuggestions] = useState([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
+  
   const [showAnalytics, setShowAnalytics] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [fieldData, setFieldData] = useState(null);
@@ -110,46 +141,139 @@ const CropDashboard = () => {
   const popup = useRef(null);
   const mapInitialized = useRef(false);
 
-  // ✅ COMPLETE CROP LOOKUP LIST
+  // ✅ COMPLETE CROP LOOKUP LIST (Expanded for clarity)
   const CROP_LOOKUP = {
-    1: 'Corn', 2: 'Cotton', 3: 'Rice', 4: 'Sorghum', 5: 'Soybeans', 6: 'Sunflower',
-    10: 'Peanuts', 11: 'Tobacco', 12: 'Sweet Corn', 13: 'Pop/Orn Corn', 14: 'Mint',
-    21: 'Barley', 22: 'Durum Wheat', 23: 'Spring Wheat', 24: 'Winter Wheat', 
-    25: 'Other Small Grains', 26: 'Dbl Crop WinWht/Soybeans', 27: 'Rye', 28: 'Oats', 
-    29: 'Millet', 30: 'Speltz', 31: 'Canola', 32: 'Flaxseed', 33: 'Safflower', 
-    34: 'Rape Seed', 35: 'Mustard', 36: 'Alfalfa', 37: 'Other Hay/Non Alfalfa',
-    41: 'Sugarbeets', 42: 'Dry Beans', 43: 'Potatoes', 44: 'Other Crops', 
-    45: 'Sugarcane', 46: 'Sweet Potatoes', 47: 'Misc Vegs & Fruits', 48: 'Watermelons', 
-    49: 'Onions', 50: 'Cucumbers', 51: 'Chick Peas', 52: 'Lentils', 53: 'Peas', 
-    54: 'Tomatoes', 55: 'Caneberries', 56: 'Hops', 57: 'Herbs', 58: 'Clover/Wildflowers', 
-    59: 'Sod/Grass Seed', 60: 'Switchgrass', 61: 'Fallow/Idle Cropland', 63: 'Forest', 
-    64: 'Shrubland', 65: 'Barren', 66: 'Cherries', 67: 'Peaches', 68: 'Apples', 
-    69: 'Grapes', 70: 'Christmas Trees', 71: 'Other Tree Crops', 72: 'Citrus', 
-    74: 'Pecans', 75: 'Almonds', 76: 'Walnuts', 77: 'Pears', 
-    111: 'Open Water', 121: 'Developed/Open Space', 122: 'Developed/Low Intensity', 
-    123: 'Developed/Med Intensity', 124: 'Developed/High Intensity', 152: 'Shrubland', 
-    176: 'Grassland/Pasture', 190: 'Woody Wetlands', 195: 'Herbaceous Wetlands', 
-    204: 'Pistachios', 205: 'Triticale', 206: 'Carrots', 207: 'Asparagus', 208: 'Garlic', 
-    209: 'Cantaloupes', 210: 'Prunes', 211: 'Olives', 212: 'Oranges', 
-    213: 'Honeydew Melons', 214: 'Broccoli', 216: 'Peppers', 217: 'Pomegranates', 
-    218: 'Nectarines', 219: 'Greens', 220: 'Plums', 221: 'Strawberries', 222: 'Squash', 
-    223: 'Apricots', 224: 'Vetch', 225: 'Dbl Crop WinWht/Corn', 226: 'Dbl Crop Oats/Corn', 
-    227: 'Lettuce', 228: 'Dbl Crop Triticale/Corn', 229: 'Pumpkins', 
-    230: 'Dbl Crop Lettuce/Durum Wht', 231: 'Dbl Crop Lettuce/Cantaloupe', 
-    232: 'Dbl Crop Lettuce/Cotton', 233: 'Dbl Crop Lettuce/Barley', 
-    234: 'Dbl Crop Durum Wht/Sorghum', 235: 'Dbl Crop Barley/Sorghum', 
-    236: 'Dbl Crop WinWht/Sorghum', 237: 'Dbl Crop Barley/Corn', 
-    238: 'Dbl Crop WinWht/Cotton', 239: 'Dbl Crop Soybeans/Cotton', 
-    240: 'Dbl Crop Soybeans/Oats', 241: 'Dbl Crop Corn/Soybeans', 242: 'Blueberries', 
-    243: 'Cabbage', 244: 'Cauliflower', 245: 'Celery', 246: 'Radishes', 247: 'Turnips', 
-    248: 'Eggplants', 249: 'Gourds', 250: 'Cranberries', 254: 'Dbl Crop Barley/Soybeans'
+    1: 'Corn', 
+    2: 'Cotton', 
+    3: 'Rice', 
+    4: 'Sorghum', 
+    5: 'Soybeans', 
+    6: 'Sunflower',
+    10: 'Peanuts', 
+    11: 'Tobacco', 
+    12: 'Sweet Corn', 
+    13: 'Pop/Orn Corn', 
+    14: 'Mint',
+    21: 'Barley', 
+    22: 'Durum Wheat', 
+    23: 'Spring Wheat', 
+    24: 'Winter Wheat', 
+    25: 'Other Small Grains', 
+    26: 'Dbl Crop WinWht/Soybeans', 
+    27: 'Rye', 
+    28: 'Oats', 
+    29: 'Millet', 
+    30: 'Speltz', 
+    31: 'Canola', 
+    32: 'Flaxseed', 
+    33: 'Safflower', 
+    34: 'Rape Seed', 
+    35: 'Mustard', 
+    36: 'Alfalfa', 
+    37: 'Other Hay/Non Alfalfa',
+    41: 'Sugarbeets', 
+    42: 'Dry Beans', 
+    43: 'Potatoes', 
+    44: 'Other Crops', 
+    45: 'Sugarcane', 
+    46: 'Sweet Potatoes', 
+    47: 'Misc Vegs & Fruits', 
+    48: 'Watermelons', 
+    49: 'Onions', 
+    50: 'Cucumbers', 
+    51: 'Chick Peas', 
+    52: 'Lentils', 
+    53: 'Peas', 
+    54: 'Tomatoes', 
+    55: 'Caneberries', 
+    56: 'Hops', 
+    57: 'Herbs', 
+    58: 'Clover/Wildflowers', 
+    59: 'Sod/Grass Seed', 
+    60: 'Switchgrass', 
+    61: 'Fallow/Idle Cropland', 
+    63: 'Forest', 
+    64: 'Shrubland', 
+    65: 'Barren', 
+    66: 'Cherries', 
+    67: 'Peaches', 
+    68: 'Apples', 
+    69: 'Grapes', 
+    70: 'Christmas Trees', 
+    71: 'Other Tree Crops', 
+    72: 'Citrus', 
+    74: 'Pecans', 
+    75: 'Almonds', 
+    76: 'Walnuts', 
+    77: 'Pears', 
+    111: 'Open Water', 
+    121: 'Developed/Open Space', 
+    122: 'Developed/Low Intensity', 
+    123: 'Developed/Med Intensity', 
+    124: 'Developed/High Intensity', 
+    152: 'Shrubland', 
+    176: 'Grassland/Pasture', 
+    190: 'Woody Wetlands', 
+    195: 'Herbaceous Wetlands', 
+    204: 'Pistachios', 
+    205: 'Triticale', 
+    206: 'Carrots', 
+    207: 'Asparagus', 
+    208: 'Garlic', 
+    209: 'Cantaloupes', 
+    210: 'Prunes', 
+    211: 'Olives', 
+    212: 'Oranges', 
+    213: 'Honeydew Melons', 
+    214: 'Broccoli', 
+    216: 'Peppers', 
+    217: 'Pomegranates', 
+    218: 'Nectarines', 
+    219: 'Greens', 
+    220: 'Plums', 
+    221: 'Strawberries', 
+    222: 'Squash', 
+    223: 'Apricots', 
+    224: 'Vetch', 
+    225: 'Dbl Crop WinWht/Corn', 
+    226: 'Dbl Crop Oats/Corn', 
+    227: 'Lettuce', 
+    228: 'Dbl Crop Triticale/Corn', 
+    229: 'Pumpkins', 
+    230: 'Dbl Crop Lettuce/Durum Wht', 
+    231: 'Dbl Crop Lettuce/Cantaloupe', 
+    232: 'Dbl Crop Lettuce/Cotton', 
+    233: 'Dbl Crop Lettuce/Barley', 
+    234: 'Dbl Crop Durum Wht/Sorghum', 
+    235: 'Dbl Crop Barley/Sorghum', 
+    236: 'Dbl Crop WinWht/Sorghum', 
+    237: 'Dbl Crop Barley/Corn', 
+    238: 'Dbl Crop WinWht/Cotton', 
+    239: 'Dbl Crop Soybeans/Cotton', 
+    240: 'Dbl Crop Soybeans/Oats', 
+    241: 'Dbl Crop Corn/Soybeans', 
+    242: 'Blueberries', 
+    243: 'Cabbage', 
+    244: 'Cauliflower', 
+    245: 'Celery', 
+    246: 'Radishes', 
+    247: 'Turnips', 
+    248: 'Eggplants', 
+    249: 'Gourds', 
+    250: 'Cranberries', 
+    254: 'Dbl Crop Barley/Soybeans'
   };
   
   const cropColors = { 
     '1': '#F4D03F', '5': '#229954', '24': '#A04000', '36': '#2ECC71', 
     '176': '#CDDC39', '61': '#BDBDBD', '66': '#C2185B', '69': '#7B1FA2', 
     '75': '#D7CCC8', '77': '#AED581', '228': '#546E7A', '33': '#FF5722',
-    '71': '#BCAAA4', '204': '#009688', '212': '#FF9800', '250': '#C0392B'
+    '71': '#BCAAA4', '204': '#009688', '212': '#FF9800', '250': '#C0392B',
+    '2': '#FFFFFF', '3': '#00A8E1', '4': '#FF9E0A', '6': '#FFFF00',
+    '12': '#F7DC6F', '21': '#D35400', '23': '#A04000', '28': '#8c9eff',
+    '37': '#9CCC65', '43': '#FFCC80', '54': '#F44336', '76': '#795548',
+    '111': '#4FC3F7', '121': '#ECEFF1', '122': '#CFD8DC', 
+    '190': '#7CB342', '195': '#81C784'
   };
 
   useEffect(() => {
@@ -428,8 +552,8 @@ const CropDashboard = () => {
               <div className="header-meta"><MapPinned size={14} /><span>{fieldData.location.lat.toFixed(4)}°, {fieldData.location.lon.toFixed(4)}°</span><span style={{margin:'0 4px'}}>•</span><span>{fieldData.acres} Acres</span></div>
             </div>
 
-            {/* ✅ FIXED: Health Card logic ensures it is always shown with valid data */}
-            {fieldData.healthData && fieldData.healthData.score !== null && (
+            {/* ✅ FIXED: Soil Health Card with safe check */}
+            {fieldData.healthData && fieldData.healthData.score != null && (
               <div className="card health-card">
                 <div className="card-title"><Activity size={18} /><span>Soil Health Analysis</span></div>
                 <div className="health-content">
