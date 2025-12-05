@@ -6,37 +6,31 @@ import {
   Menu, ArrowLeft
 } from 'lucide-react';
 
-// ✅ CONFIGURATION
 const API_ENDPOINT = "https://crop-detection-dcecevhvh5ard2ah.eastus-01.azurewebsites.net/api/analyze_field";
 const CURRENT_YEAR = 2022;
 const PMTILES_2022 = "pmtiles://https://satelliteimages.blob.core.windows.net/pmt-tiles/crop_2022.pmtiles";
 
-// --- RESOURCE LOADER ---
 const loadMapResources = () => {
   return new Promise(async (resolve, reject) => {
     if (window.maplibregl && window.pmtiles) return resolve();
-
     const loadScript = (src) => new Promise((res, rej) => {
       const existing = document.querySelector(`script[src="${src}"]`);
       if (existing) {
         if (src.includes('maplibre') && window.maplibregl) return res();
         if (src.includes('pmtiles') && window.pmtiles) return res();
         existing.addEventListener('load', res);
-        existing.addEventListener('error', rej);
         return;
       }
       const s = document.createElement('script'); 
       s.src = src; s.async = true; s.onload = res; s.onerror = rej;
       document.head.appendChild(s);
     });
-
     const loadStyles = (href) => {
       if (document.querySelector(`link[href="${href}"]`)) return;
       const link = document.createElement('link');
       link.rel = 'stylesheet'; link.href = href;
       document.head.appendChild(link);
     };
-
     try {
       loadStyles('https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css');
       await Promise.all([
@@ -48,7 +42,6 @@ const loadMapResources = () => {
   });
 };
 
-// --- DATA HELPERS ---
 const getTextureClass = (sand, clay) => {
   const s = sand || 0;
   const c = clay || 0;
@@ -58,65 +51,52 @@ const getTextureClass = (sand, clay) => {
   return "Loam";
 };
 
-// ✅ FIXED: Logic updated to prevent "0 Poor". UI structure remains untouched.
+// ✅ FIX: Robust Health Score (Prevents "0" Score Crash)
 const getHealthScore = (soil) => {
-  // If soil is totally missing, use safe defaults to generate a "Fair" score (75)
-  // so the UI card renders instead of disappearing or showing 0.
-  const safeSoil = soil || {};
-  const ph = safeSoil.ph || 6.5; 
-  const soc = safeSoil.soc || 20; 
-  const nitrogen = safeSoil.nitrogen || 2.5;
+  // Return null ONLY if soil is fully missing (backend fix prevents this mostly)
+  if (!soil) return null;
+  
+  // Safe defaults ensure we can calculate a score even if one metric is null
+  const ph = soil.ph || 6.5; 
+  const soc = soil.soc || 20; 
+  const nitrogen = soil.nitrogen || 2.5;
 
   let score = 100;
   const issues = [];
   const strengths = [];
 
   // 1. pH Check
-  if (ph < 6.0) { 
-      score -= 15; 
-      issues.push({ message: `Acidic Soil (pH ${ph.toFixed(1)})`, severity: "medium" }); 
-  } else if (ph > 7.5) { 
-      score -= 15; 
-      issues.push({ message: `Alkaline Soil (pH ${ph.toFixed(1)})`, severity: "medium" }); 
-  } else { 
-      strengths.push({ message: "pH is in optimal range" }); 
-  }
+  if (ph < 6.0) { score -= 15; issues.push({ message: `Acidic Soil (pH ${ph.toFixed(1)})`, severity: "medium" }); } 
+  else if (ph > 7.5) { score -= 15; issues.push({ message: `Alkaline Soil (pH ${ph.toFixed(1)})`, severity: "medium" }); } 
+  else { strengths.push({ message: "pH is in optimal range" }); }
 
   // 2. SOC Check
-  if (soc < 15) { 
-      score -= 20; 
-      issues.push({ message: "Low organic matter", severity: "high" }); 
-  } else { 
-      strengths.push({ message: "Good organic matter" }); 
-  }
+  if (soc < 15) { score -= 20; issues.push({ message: "Low organic matter", severity: "high" }); } 
+  else { strengths.push({ message: "Good organic matter" }); }
 
   // 3. Nitrogen Check
-  if (nitrogen < 2.0) { 
-      score -= 15; 
-      issues.push({ message: "Low Nitrogen", severity: "medium" }); 
-  }
+  if (nitrogen < 2.0) { score -= 15; issues.push({ message: "Low Nitrogen", severity: "medium" }); }
   
+  // Ensure we return a valid number, never NaN or negative
   return { score: Math.max(0, score), issues, strengths };
 };
 
 const getFertilizerPlan = (soil) => {
   if (!soil) return [];
   const plan = [];
-  const ph = soil.ph || 0;
-  const nitrogen = soil.nitrogen || 0;
+  const ph = soil.ph || 6.5; // Safe default
+  const nitrogen = soil.nitrogen || 2.5; // Safe default
   
   if (nitrogen < 2.0) plan.push({ nutrient: "Nitrogen (N)", priority: "HIGH", amount: "80-100 lbs/ac", fertilizer: "Urea (46-0-0)", current: nitrogen.toFixed(2), target: "3.5", timing: "Split application at planting" });
-  if (ph < 6.0 && ph > 0) plan.push({ nutrient: "pH Adjustment", priority: "HIGH", amount: "2-3 tons/ac", fertilizer: "Ag Limestone", current: ph.toFixed(1), target: "6.5", timing: "Fall application" });
+  if (ph < 6.0) plan.push({ nutrient: "pH Adjustment", priority: "HIGH", amount: "2-3 tons/ac", fertilizer: "Ag Limestone", current: ph.toFixed(1), target: "6.5", timing: "Fall application" });
   return plan;
 };
 
-// --- MAIN COMPONENT ---
 const CropDashboard = () => {
   const [address, setAddress] = useState('');
   const [suggestions, setSuggestions] = useState([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
-  
   const [showAnalytics, setShowAnalytics] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [fieldData, setFieldData] = useState(null);
@@ -191,9 +171,13 @@ const CropDashboard = () => {
       const history = data.history || {};
       history[CURRENT_YEAR] = { crop: cropName, code: currentProps.CROP_TYPE, acres: currentProps.CSBACRES };
       
-      // ✅ Silt Calculation Fix
+      // ✅ FIX: Ensure soil object exists
       const soil = data.soil || { ph: 6.5, soc: 20, nitrogen: 2.5, clay: 25, sand: 35 };
-      if (soil.silt === undefined) soil.silt = Math.max(0, 100 - (soil.sand || 0) - (soil.clay || 0));
+      
+      // ✅ FIX: Silt Calculation
+      if (soil.silt === undefined) {
+        soil.silt = Math.max(0, 100 - (soil.sand || 0) - (soil.clay || 0));
+      }
 
       setFieldData({
         cropName: cropName, 
@@ -203,7 +187,7 @@ const CropDashboard = () => {
         soil: soil, 
         recommendations: data.recommendations || [], 
         texture: getTextureClass(soil.sand, soil.clay),
-        healthData: getHealthScore(soil), // New helper avoids 0 crash
+        healthData: getHealthScore(soil), // Using fixed function
         fertilizerPlan: getFertilizerPlan(soil), 
         location: { lat, lon }
       });
@@ -444,8 +428,8 @@ const CropDashboard = () => {
               <div className="header-meta"><MapPinned size={14} /><span>{fieldData.location.lat.toFixed(4)}°, {fieldData.location.lon.toFixed(4)}°</span><span style={{margin:'0 4px'}}>•</span><span>{fieldData.acres} Acres</span></div>
             </div>
 
-            {/* ✅ MATCHED: Original Health Card Structure Restored */}
-            {fieldData.healthData && (
+            {/* ✅ FIXED: Health Card logic ensures it is always shown with valid data */}
+            {fieldData.healthData && fieldData.healthData.score !== null && (
               <div className="card health-card">
                 <div className="card-title"><Activity size={18} /><span>Soil Health Analysis</span></div>
                 <div className="health-content">
@@ -467,7 +451,9 @@ const CropDashboard = () => {
                 <div className="composition-pie">
                   <svg viewBox="0 0 200 200" className="pie-chart">
                     {(() => {
-                      const total = fieldData.soil.sand + fieldData.soil.clay + fieldData.soil.silt;
+                      const total = (fieldData.soil.sand || 0) + (fieldData.soil.clay || 0) + (fieldData.soil.silt || 0);
+                      if (total === 0) return null;
+                      
                       let currentAngle = -90;
                       const colors = ['#f59e0b', '#a16207', '#78350f'];
                       return [fieldData.soil.sand, fieldData.soil.silt, fieldData.soil.clay].map((val, i) => {
@@ -486,15 +472,15 @@ const CropDashboard = () => {
                     })()}
                   </svg>
                   <div className="pie-legend">
-                    <div className="pie-legend-item"><span className="pie-dot" style={{background: '#f59e0b'}}></span><span>Sand: {fieldData.soil.sand.toFixed(1)}%</span></div>
-                    <div className="pie-legend-item"><span className="pie-dot" style={{background: '#a16207'}}></span><span>Silt: {fieldData.soil.silt.toFixed(1)}%</span></div>
-                    <div className="pie-legend-item"><span className="pie-dot" style={{background: '#78350f'}}></span><span>Clay: {fieldData.soil.clay.toFixed(1)}%</span></div>
+                    <div className="pie-legend-item"><span className="pie-dot" style={{background: '#f59e0b'}}></span><span>Sand: {fieldData.soil.sand?.toFixed(1) || 0}%</span></div>
+                    <div className="pie-legend-item"><span className="pie-dot" style={{background: '#a16207'}}></span><span>Silt: {fieldData.soil.silt?.toFixed(1) || 0}%</span></div>
+                    <div className="pie-legend-item"><span className="pie-dot" style={{background: '#78350f'}}></span><span>Clay: {fieldData.soil.clay?.toFixed(1) || 0}%</span></div>
                   </div>
                 </div>
                 <div className="metrics-grid">
-                  <div className="metric-box"><Droplets size={18} className="metric-icon" style={{color: '#3b82f6'}} /><div className="metric-content"><span className="metric-label">pH Level</span><span className="metric-value">{fieldData.soil.ph.toFixed(1)}</span></div></div>
-                  <div className="metric-box"><Leaf size={18} className="metric-icon" style={{color: '#10b981'}} /><div className="metric-content"><span className="metric-label">Carbon</span><span className="metric-value">{fieldData.soil.soc.toFixed(1)} g/kg</span></div></div>
-                  <div className="metric-box"><Sprout size={18} className="metric-icon" style={{color: '#f59e0b'}} /><div className="metric-content"><span className="metric-label">Nitrogen</span><span className="metric-value">{fieldData.soil.nitrogen.toFixed(2)} g/kg</span></div></div>
+                  <div className="metric-box"><Droplets size={18} className="metric-icon" style={{color: '#3b82f6'}} /><div className="metric-content"><span className="metric-label">pH Level</span><span className="metric-value">{fieldData.soil.ph?.toFixed(1) || '-'}</span></div></div>
+                  <div className="metric-box"><Leaf size={18} className="metric-icon" style={{color: '#10b981'}} /><div className="metric-content"><span className="metric-label">Carbon</span><span className="metric-value">{fieldData.soil.soc?.toFixed(1) || '-'} g/kg</span></div></div>
+                  <div className="metric-box"><Sprout size={18} className="metric-icon" style={{color: '#f59e0b'}} /><div className="metric-content"><span className="metric-label">Nitrogen</span><span className="metric-value">{fieldData.soil.nitrogen?.toFixed(2) || '-'} g/kg</span></div></div>
                 </div>
               </div>
             )}
