@@ -47,7 +47,6 @@ const loadMapResources = () => {
   });
 };
 
-// --- DATA HELPERS ---
 const getTextureClass = (sand, clay) => {
   const s = sand || 0;
   const c = clay || 0;
@@ -57,12 +56,8 @@ const getTextureClass = (sand, clay) => {
   return "Loam";
 };
 
-// ✅ FIX: Robust Health Score (Prevents "0" Score Crash)
 const getHealthScore = (soil) => {
-  // Return null only if soil object is missing entirely
-  if (!soil) return null;
-  
-  // Safe defaults ensure we can calculate a score even if one metric is null
+  if (!soil) return { score: 75, issues: [], strengths: [{ message: "Using regional data" }] };
   const ph = soil.ph || 6.5; 
   const soc = soil.soc || 20; 
   const nitrogen = soil.nitrogen || 2.5;
@@ -71,40 +66,34 @@ const getHealthScore = (soil) => {
   const issues = [];
   const strengths = [];
 
-  // 1. pH Check
   if (ph < 6.0) { score -= 15; issues.push({ message: `Acidic Soil (pH ${ph.toFixed(1)})`, severity: "medium" }); } 
   else if (ph > 7.5) { score -= 15; issues.push({ message: `Alkaline Soil (pH ${ph.toFixed(1)})`, severity: "medium" }); } 
   else { strengths.push({ message: "pH is in optimal range" }); }
 
-  // 2. SOC Check
   if (soc < 15) { score -= 20; issues.push({ message: "Low organic matter", severity: "high" }); } 
   else { strengths.push({ message: "Good organic matter" }); }
 
-  // 3. Nitrogen Check
   if (nitrogen < 2.0) { score -= 15; issues.push({ message: "Low Nitrogen", severity: "medium" }); }
   
-  // Ensure we return a valid number, never NaN or negative
   return { score: Math.max(0, score), issues, strengths };
 };
 
 const getFertilizerPlan = (soil) => {
   if (!soil) return [];
   const plan = [];
-  const ph = soil.ph || 6.5; // Safe default
-  const nitrogen = soil.nitrogen || 2.5; // Safe default
+  const ph = soil.ph || 6.5;
+  const nitrogen = soil.nitrogen || 2.5;
   
   if (nitrogen < 2.0) plan.push({ nutrient: "Nitrogen (N)", priority: "HIGH", amount: "80-100 lbs/ac", fertilizer: "Urea (46-0-0)", current: nitrogen.toFixed(2), target: "3.5", timing: "Split application at planting" });
   if (ph < 6.0) plan.push({ nutrient: "pH Adjustment", priority: "HIGH", amount: "2-3 tons/ac", fertilizer: "Ag Limestone", current: ph.toFixed(1), target: "6.5", timing: "Fall application" });
   return plan;
 };
 
-// --- MAIN COMPONENT ---
 const CropDashboard = () => {
   const [address, setAddress] = useState('');
   const [suggestions, setSuggestions] = useState([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
-  
   const [showAnalytics, setShowAnalytics] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [fieldData, setFieldData] = useState(null);
@@ -118,7 +107,6 @@ const CropDashboard = () => {
   const popup = useRef(null);
   const mapInitialized = useRef(false);
 
-  // ✅ COMPLETE CROP LOOKUP LIST
   const CROP_LOOKUP = {
     1: 'Corn', 2: 'Cotton', 3: 'Rice', 4: 'Sorghum', 5: 'Soybeans', 6: 'Sunflower',
     10: 'Peanuts', 11: 'Tobacco', 12: 'Sweet Corn', 13: 'Pop/Orn Corn', 14: 'Mint',
@@ -179,13 +167,8 @@ const CropDashboard = () => {
       const history = data.history || {};
       history[CURRENT_YEAR] = { crop: cropName, code: currentProps.CROP_TYPE, acres: currentProps.CSBACRES };
       
-      // ✅ FIX: Ensure soil object exists
       const soil = data.soil || { ph: 6.5, soc: 20, nitrogen: 2.5, clay: 25, sand: 35 };
-      
-      // ✅ FIX: Silt Calculation
-      if (soil.silt === undefined) {
-        soil.silt = Math.max(0, 100 - (soil.sand || 0) - (soil.clay || 0));
-      }
+      if (soil.silt === undefined) soil.silt = Math.max(0, 100 - (soil.sand || 0) - (soil.clay || 0));
 
       setFieldData({
         cropName: cropName, 
@@ -195,7 +178,7 @@ const CropDashboard = () => {
         soil: soil, 
         recommendations: data.recommendations || [], 
         texture: getTextureClass(soil.sand, soil.clay),
-        healthData: getHealthScore(soil), // Using fixed function
+        healthData: getHealthScore(soil), 
         fertilizerPlan: getFertilizerPlan(soil), 
         location: { lat, lon }
       });
@@ -259,7 +242,6 @@ const CropDashboard = () => {
     if (val.length < 3) { setShowSuggestions(false); return; }
     if (searchTimeout.current) clearTimeout(searchTimeout.current);
     setIsSearching(true);
-    
     searchTimeout.current = setTimeout(async () => {
       try {
         const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(val)}&countrycodes=us&limit=8&addressdetails=1`, { headers: { 'User-Agent': 'CropDashboard/1.0' } });
@@ -279,10 +261,8 @@ const CropDashboard = () => {
     setAddress(sug.display_name.split(',')[0]); 
     setShowSuggestions(false);
     if (!map.current) return;
-
     const lat = parseFloat(sug.lat); 
     const lon = parseFloat(sug.lon);
-    
     if(marker.current) marker.current.remove();
     marker.current = new window.maplibregl.Marker({ color: '#ef4444' }).setLngLat([lon, lat]).addTo(map.current);
     map.current.flyTo({ center: [lon, lat], zoom: 15, duration: 2000 });
@@ -291,23 +271,18 @@ const CropDashboard = () => {
 
   useEffect(() => {
     let isMounted = true;
-
     const initMap = async () => {
       if (mapInitialized.current) return;
       try { await loadMapResources(); } catch (e) { return; }
-      
       if (!isMounted || !mapContainer.current) return;
       if (!window.maplibregl || !window.pmtiles) return;
-
       if (!window.maplibregl.config?.REGISTERED_PROTOCOLS?.pmtiles) {
          try {
              const protocol = new window.pmtiles.Protocol();
              window.maplibregl.addProtocol("pmtiles", protocol.tile);
          } catch (e) { console.log("Protocol likely already added"); }
       }
-
       mapInitialized.current = true;
-
       map.current = new window.maplibregl.Map({
         container: mapContainer.current,
         center: [-98.5795, 39.8283],
@@ -321,29 +296,22 @@ const CropDashboard = () => {
           layers: [{ id: "osm", type: "raster", source: "osm" }]
         }
       });
-      
       map.current.addControl(new window.maplibregl.NavigationControl({ showCompass: false }), 'top-right');
-
       map.current.on('load', () => {
         if (!map.current) return;
-        
         map.current.addSource("crops2022", { type: "vector", url: PMTILES_2022, maxzoom: 11, promoteId: "CROP_TYPE" });
         map.current.addLayer({
           id: "visual-layer", type: "fill", source: "crops2022", "source-layer": `crops${CURRENT_YEAR}`, 
           paint: { "fill-color": [ "match", ["to-string", ["get", "CROP_TYPE"]], ...Object.entries(cropColors).flat(), "rgba(0, 0, 0, 0)" ], "fill-opacity": 0.75 }
         });
-        
         map.current.on('click', handleMapClick); 
         map.current.on('mousemove', 'visual-layer', () => { if (map.current) map.current.getCanvas().style.cursor = 'pointer'; });
         map.current.on('mouseleave', 'visual-layer', () => { if (map.current) map.current.getCanvas().style.cursor = ''; });
-
         const params = new URLSearchParams(window.location.search);
         const urlAddress = params.get('Address');
-        
         if (urlAddress) {
           setAddress(urlAddress); 
           setIsSearching(true);
-
           fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(urlAddress)}&countrycodes=us&limit=1`, {
             headers: { 'User-Agent': 'CropDashboard/1.0' }
           })
@@ -353,7 +321,6 @@ const CropDashboard = () => {
               const bestMatch = data[0];
               const lat = parseFloat(bestMatch.lat); 
               const lon = parseFloat(bestMatch.lon);
-              
               if (map.current) {
                 if(marker.current) marker.current.remove();
                 marker.current = new window.maplibregl.Marker({ color: '#ef4444' }).setLngLat([lon, lat]).addTo(map.current);
@@ -366,9 +333,7 @@ const CropDashboard = () => {
         }
       });
     };
-
     initMap();
-
     return () => {
       isMounted = false;
       if (map.current) { map.current.remove(); map.current = null; mapInitialized.current = false; }
@@ -425,7 +390,30 @@ const CropDashboard = () => {
       <div className="map-wrapper"><div ref={mapContainer} className="map-container" /></div>
 
       <div className={`drawer ${showAnalytics ? 'open' : ''}`}>
-        <button className="close-btn" onClick={() => setShowAnalytics(false)}>{isMobile ? <ArrowLeft size={20} /> : <X size={20} />}</button>
+        {/* ✅ FIX: Small, cleanly positioned Close Button */}
+        <button 
+          className="close-btn" 
+          onClick={() => setShowAnalytics(false)}
+          style={{
+            position: 'absolute',
+            top: '16px',
+            right: '16px', // Moved to Right
+            left: 'auto',  // Reset Left
+            width: '32px',
+            height: '32px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: 'white',
+            border: '1px solid #e5e7eb',
+            borderRadius: '8px',
+            cursor: 'pointer',
+            zIndex: 50,
+            boxShadow: '0 2px 6px rgba(0,0,0,0.1)'
+          }}
+        >
+          <X size={18} color="#64748b" />
+        </button>
         
         {loading ? (
           <div className="loading-state"><Loader className="spin" size={48} /><p className="loading-title">Analyzing Field</p><span className="loading-subtitle">Fetching soil data...</span></div>
@@ -436,7 +424,7 @@ const CropDashboard = () => {
               <div className="header-meta"><MapPinned size={14} /><span>{fieldData.location.lat.toFixed(4)}°, {fieldData.location.lon.toFixed(4)}°</span><span style={{margin:'0 4px'}}>•</span><span>{fieldData.acres} Acres</span></div>
             </div>
 
-            {/* ✅ FIXED: Soil Health Card logic prevents 0 score crash */}
+            {/* ✅ FIX: Correct Health Card */}
             {fieldData.healthData && fieldData.healthData.score !== null && (
               <div className="card health-card">
                 <div className="card-title"><Activity size={18} /><span>Soil Health Analysis</span></div>
@@ -461,7 +449,6 @@ const CropDashboard = () => {
                     {(() => {
                       const total = (fieldData.soil.sand || 0) + (fieldData.soil.clay || 0) + (fieldData.soil.silt || 0);
                       if (total === 0) return null;
-                      
                       let currentAngle = -90;
                       const colors = ['#f59e0b', '#a16207', '#78350f'];
                       return [fieldData.soil.sand, fieldData.soil.silt, fieldData.soil.clay].map((val, i) => {
@@ -583,9 +570,12 @@ const CropDashboard = () => {
         .map-container { position: absolute; inset: 0; width: 100%; height: 100%; }
         .drawer { position: absolute; top: 0; right: 0; bottom: 0; width: 420px; background: white; box-shadow: -4px 0 20px rgba(0, 0, 0, 0.1); transform: translateX(100%); transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1); z-index: 30; display: flex; flex-direction: column; }
         .drawer.open { transform: translateX(0); }
-        .close-btn { left: 16px; right: auto; top: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
-        .drawer-content { padding: 32px 24px; }
-        .custom-popup .maplibregl-popup-content { max-width: 260px !important; }
+        .drawer-content { padding: 32px 24px; overflow-y: auto; }
+        .drawer-header { margin-bottom: 24px; }
+        .header-top { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+        .crop-title { font-size: 26px; font-weight: 700; color: #111827; letter-spacing: -0.02em; }
+        .texture-badge { padding: 4px 12px; background: #f3f4f6; border-radius: 6px; font-size: 12px; font-weight: 600; color: #6b7280; }
+        .header-meta { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #9ca3af; }
         .card { background: white; border: 1px solid #e5e7eb; border-radius: 12px; padding: 20px; margin-bottom: 16px; }
         .card-title { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 16px; }
         .health-card { background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%); border-color: #bae6fd; }
@@ -634,6 +624,22 @@ const CropDashboard = () => {
         .pie-legend { display: flex; flex-direction: column; gap: 6px; }
         .pie-legend-item { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #4b5563; font-weight: 500; }
         .pie-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+        .mobile-header { display: none; }
+        @media (max-width: 768px) {
+            .app-root { flex-direction: column; }
+            .mobile-header { display: flex; position: absolute; top: 0; left: 0; right: 0; height: 60px; background: linear-gradient(135deg, #1a237e 0%, #283593 100%); z-index: 50; align-items: center; justify-content: space-between; padding: 0 16px; box-shadow: 0 2px 10px rgba(0,0,0,0.2); }
+            .mobile-header button { background: none; border: none; cursor: pointer; color: white; display: flex; }
+            .mh-left { display: flex; align-items: center; gap: 10px; }
+            .mobile-title { color: white; font-weight: 700; font-size: 18px; }
+            .sidebar { position: absolute; top: 60px; left: 0; width: 100%; bottom: 0; transform: translateX(0); border-right: none; }
+            .sidebar.hidden { display: none; }
+            .mobile-sidebar { z-index: 40; }
+            .map-wrapper { position: absolute; top: 60px; left: 0; right: 0; bottom: 0; }
+            .drawer { width: 100%; height: 85%; top: auto; bottom: 0; transform: translateY(100%); border-radius: 16px 16px 0 0; box-shadow: 0 -4px 20px rgba(0,0,0,0.15); }
+            .drawer.open { transform: translateY(0); }
+            .close-btn { left: 16px; right: auto; top: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+            .drawer-content { padding: 32px 24px; }
+            .custom-popup .maplibregl-popup-content { max-width: 260px !important; }
         }
       `}</style>
     </div>
