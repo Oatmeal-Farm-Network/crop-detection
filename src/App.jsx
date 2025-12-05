@@ -6,7 +6,7 @@ import {
   Menu, ArrowLeft
 } from 'lucide-react';
 
-// ✅ CONFIGURATION
+// ✅ CONFIGURATION: Update this URL if your backend URL changes
 const API_ENDPOINT = "https://crop-detection-dcecevhvh5ard2ah.eastus-01.azurewebsites.net/api/analyze_field";
 const CURRENT_YEAR = 2022;
 const PMTILES_2022 = "pmtiles://https://satelliteimages.blob.core.windows.net/pmt-tiles/crop_2022.pmtiles";
@@ -50,30 +50,65 @@ const loadMapResources = () => {
 
 // --- DATA HELPERS ---
 const getTextureClass = (sand, clay) => {
-  if (!sand || !clay) return "Unknown";
-  if (clay >= 40) return "Clay";
-  if (sand > 45) return "Sandy Loam";
+  const s = sand || 0;
+  const c = clay || 0;
+  
+  if (s + c === 0) return "Unknown";
+  if (c >= 40) return "Clay";
+  if (s > 45) return "Sandy Loam";
   return "Loam";
 };
 
+// ✅ ROBUST HEALTH SCORE CALCULATION
 const getHealthScore = (soil) => {
   if (!soil) return { score: 0, issues: [], strengths: [] };
+  
+  // Use logical OR (|| 0) to ensure values are numbers for safe comparison
+  const ph = soil.ph || 0;
+  const soc = soil.soc || 0;
+  const nitrogen = soil.nitrogen || 0;
+
   let score = 100;
   const issues = [];
   const strengths = [];
-  if (soil.ph < 6.0) { score -= 15; issues.push({ message: `Acidic Soil (pH ${soil.ph.toFixed(1)})`, severity: "medium" }); } 
-  else if (soil.ph > 7.5) { score -= 15; issues.push({ message: `Alkaline Soil (pH ${soil.ph.toFixed(1)})`, severity: "medium" }); } 
-  else { strengths.push({ message: "pH is in optimal range" }); }
-  if (soil.soc < 15) { score -= 20; issues.push({ message: "Low organic matter", severity: "high" }); } else { strengths.push({ message: "Good organic matter" }); }
-  if (soil.nitrogen < 2.0) { score -= 15; issues.push({ message: "Low Nitrogen", severity: "medium" }); }
+
+  // 1. pH Check
+  if (ph < 6.0) { 
+      score -= 15; 
+      issues.push({ message: `Acidic Soil (pH ${ph.toFixed(1)})`, severity: "medium" }); 
+  } else if (ph > 7.5) { 
+      score -= 15; 
+      issues.push({ message: `Alkaline Soil (pH ${ph.toFixed(1)})`, severity: "medium" }); 
+  } else { 
+      strengths.push({ message: "pH is in optimal range" }); 
+  }
+
+  // 2. SOC Check
+  if (soc < 15) { 
+      score -= 20; 
+      issues.push({ message: "Low organic matter", severity: "high" }); 
+  } else { 
+      strengths.push({ message: "Good organic matter" }); 
+  }
+
+  // 3. Nitrogen Check
+  if (nitrogen < 2.0) { 
+      score -= 15; 
+      issues.push({ message: "Low Nitrogen", severity: "medium" }); 
+  }
+  
   return { score: Math.max(0, score), issues, strengths };
 };
 
 const getFertilizerPlan = (soil) => {
   if (!soil) return [];
   const plan = [];
-  if (soil.nitrogen < 2.0) plan.push({ nutrient: "Nitrogen (N)", priority: "HIGH", amount: "80-100 lbs/ac", fertilizer: "Urea (46-0-0)", current: soil.nitrogen.toFixed(2), target: "3.5", timing: "Split application at planting" });
-  if (soil.ph < 6.0) plan.push({ nutrient: "pH Adjustment", priority: "HIGH", amount: "2-3 tons/ac", fertilizer: "Ag Limestone", current: soil.ph.toFixed(1), target: "6.5", timing: "Fall application" });
+  
+  const ph = soil.ph || 0;
+  const nitrogen = soil.nitrogen || 0;
+  
+  if (nitrogen < 2.0) plan.push({ nutrient: "Nitrogen (N)", priority: "HIGH", amount: "80-100 lbs/ac", fertilizer: "Urea (46-0-0)", current: nitrogen.toFixed(2), target: "3.5", timing: "Split application at planting" });
+  if (ph < 6.0) plan.push({ nutrient: "pH Adjustment", priority: "HIGH", amount: "2-3 tons/ac", fertilizer: "Ag Limestone", current: ph.toFixed(1), target: "6.5", timing: "Fall application" });
   return plan;
 };
 
@@ -97,183 +132,43 @@ const CropDashboard = () => {
   const popup = useRef(null);
   const mapInitialized = useRef(false);
 
-// ✅ COMPREHENSIVE CROP LOOKUP LIST
-// ✅ COMPREHENSIVE CROP LOOKUP (Matches your Backend)
-  const CROP_LOOKUP = { 
-    1: 'Corn',
-    2: 'Cotton',
-    3: 'Rice',
-    4: 'Sorghum',
-    5: 'Soybeans',
-    6: 'Sunflower',
-    10: 'Peanuts',
-    11: 'Tobacco',
-    12: 'Sweet Corn',
-    13: 'Pop or Orn Corn',
-    14: 'Mint',
-    21: 'Barley',
-    22: 'Durum Wheat',
-    23: 'Spring Wheat',
-    24: 'Winter Wheat',
-    25: 'Other Small Grains',
-    26: 'Dbl Crop WinWht/Soybeans',
-    27: 'Rye',
-    28: 'Oats',
-    29: 'Millet',
-    30: 'Speltz',
-    31: 'Canola',
-    32: 'Flaxseed',
-    33: 'Safflower',
-    34: 'Rape Seed',
-    35: 'Mustard',
-    36: 'Alfalfa',
-    37: 'Other Hay/Non Alfalfa',
-    41: 'Sugarbeets',
-    42: 'Dry Beans',
-    43: 'Potatoes',
-    44: 'Other Crops',
-    45: 'Sugarcane',
-    46: 'Sweet Potatoes',
-    47: 'Misc Vegs & Fruits',
-    48: 'Watermelons',
-    49: 'Onions',
-    50: 'Cucumbers',
-    51: 'Chick Peas',
-    52: 'Lentils',
-    53: 'Peas',
-    54: 'Tomatoes',
-    55: 'Caneberries',
-    56: 'Hops',
-    57: 'Herbs',
-    58: 'Clover/Wildflowers',
-    59: 'Sod/Grass Seed',
-    60: 'Switchgrass',
-    61: 'Fallow/Idle Cropland',
-    63: 'Forest',
-    64: 'Shrubland',
-    65: 'Barren',
-    66: 'Cherries',
-    67: 'Peaches',
-    68: 'Apples',
-    69: 'Grapes',
-    70: 'Christmas Trees',
-    71: 'Other Tree Crops',
-    72: 'Citrus',
-    74: 'Pecans',
-    75: 'Almonds',
-    76: 'Walnuts',
-    77: 'Pears',
-    111: 'Open Water',
-    121: 'Developed/Open Space',
-    122: 'Developed/Low Intensity',
-    123: 'Developed/Med Intensity',
-    124: 'Developed/High Intensity',
-    152: 'Shrubland',
-    176: 'Grassland/Pasture',
-    190: 'Woody Wetlands',
-    195: 'Herbaceous Wetlands',
-    204: 'Pistachios',
-    205: 'Triticale',
-    206: 'Carrots',
-    207: 'Asparagus',
-    208: 'Garlic',
-    209: 'Cantaloupes',
-    210: 'Prunes',
-    211: 'Olives',
-    212: 'Oranges',
-    213: 'Honeydew Melons',
-    214: 'Broccoli',
-    216: 'Peppers',
-    217: 'Pomegranates',
-    218: 'Nectarines',
-    219: 'Greens',
-    220: 'Plums',
-    221: 'Strawberries',
-    222: 'Squash',
-    223: 'Apricots',
-    224: 'Vetch',
-    225: 'Dbl Crop WinWht/Corn',
-    226: 'Dbl Crop Oats/Corn',
-    227: 'Lettuce',
-    228: 'Dbl Crop Triticale/Corn',
-    229: 'Pumpkins',
-    230: 'Dbl Crop Lettuce/Durum Wht',
-    231: 'Dbl Crop Lettuce/Cantaloupe',
-    232: 'Dbl Crop Lettuce/Cotton',
-    233: 'Dbl Crop Lettuce/Barley',
-    234: 'Dbl Crop Durum Wht/Sorghum',
-    235: 'Dbl Crop Barley/Sorghum',
-    236: 'Dbl Crop WinWht/Sorghum',
-    237: 'Dbl Crop Barley/Corn',
-    238: 'Dbl Crop WinWht/Cotton',
-    239: 'Dbl Crop Soybeans/Cotton',
-    240: 'Dbl Crop Soybeans/Oats',
-    241: 'Dbl Crop Corn/Soybeans',
-    242: 'Blueberries',
-    243: 'Cabbage',
-    244: 'Cauliflower',
-    245: 'Celery',
-    246: 'Radishes',
-    247: 'Turnips',
-    248: 'Eggplants',
-    249: 'Gourds',
-    250: 'Cranberries',
-    254: 'Dbl Crop Barley/Soybeans'
+  // ✅ COMPREHENSIVE CROP LOOKUP
+  const CROP_LOOKUP = {
+    1: 'Corn', 2: 'Cotton', 3: 'Rice', 4: 'Sorghum', 5: 'Soybeans', 6: 'Sunflower',
+    10: 'Peanuts', 11: 'Tobacco', 12: 'Sweet Corn', 13: 'Pop/Orn Corn', 14: 'Mint',
+    21: 'Barley', 22: 'Durum Wheat', 23: 'Spring Wheat', 24: 'Winter Wheat', 
+    25: 'Other Small Grains', 26: 'Dbl Crop WinWht/Soybeans', 27: 'Rye', 28: 'Oats', 
+    29: 'Millet', 30: 'Speltz', 31: 'Canola', 32: 'Flaxseed', 33: 'Safflower', 
+    34: 'Rape Seed', 35: 'Mustard', 36: 'Alfalfa', 37: 'Other Hay/Non Alfalfa',
+    41: 'Sugarbeets', 42: 'Dry Beans', 43: 'Potatoes', 44: 'Other Crops', 
+    45: 'Sugarcane', 46: 'Sweet Potatoes', 47: 'Misc Vegs & Fruits', 48: 'Watermelons', 
+    49: 'Onions', 50: 'Cucumbers', 51: 'Chick Peas', 52: 'Lentils', 53: 'Peas', 
+    54: 'Tomatoes', 55: 'Caneberries', 56: 'Hops', 57: 'Herbs', 58: 'Clover/Wildflowers', 
+    59: 'Sod/Grass Seed', 60: 'Switchgrass', 61: 'Fallow/Idle Cropland', 63: 'Forest', 
+    64: 'Shrubland', 65: 'Barren', 66: 'Cherries', 67: 'Peaches', 68: 'Apples', 
+    69: 'Grapes', 70: 'Christmas Trees', 71: 'Other Tree Crops', 72: 'Citrus', 
+    74: 'Pecans', 75: 'Almonds', 76: 'Walnuts', 77: 'Pears', 
+    111: 'Open Water', 121: 'Developed/Open Space', 122: 'Developed/Low Intensity', 
+    123: 'Developed/Med Intensity', 124: 'Developed/High Intensity', 152: 'Shrubland', 
+    176: 'Grassland/Pasture', 190: 'Woody Wetlands', 195: 'Herbaceous Wetlands', 
+    204: 'Pistachios', 205: 'Triticale', 206: 'Carrots', 207: 'Asparagus', 208: 'Garlic', 
+    209: 'Cantaloupes', 210: 'Prunes', 211: 'Olives', 212: 'Oranges', 
+    213: 'Honeydew Melons', 214: 'Broccoli', 216: 'Peppers', 217: 'Pomegranates', 
+    218: 'Nectarines', 219: 'Greens', 220: 'Plums', 221: 'Strawberries', 222: 'Squash', 
+    223: 'Apricots', 224: 'Vetch', 225: 'Dbl Crop WinWht/Corn', 226: 'Dbl Crop Oats/Corn', 
+    227: 'Lettuce', 228: 'Dbl Crop Triticale/Corn', 229: 'Pumpkins', 
+    230: 'Dbl Crop Lettuce/Durum Wht', 231: 'Dbl Crop Lettuce/Cantaloupe', 
+    232: 'Dbl Crop Lettuce/Cotton', 233: 'Dbl Crop Lettuce/Barley', 
+    234: 'Dbl Crop Durum Wht/Sorghum', 235: 'Dbl Crop Barley/Sorghum', 
+    236: 'Dbl Crop WinWht/Sorghum', 237: 'Dbl Crop Barley/Corn', 
+    238: 'Dbl Crop WinWht/Cotton', 239: 'Dbl Crop Soybeans/Cotton', 
+    240: 'Dbl Crop Soybeans/Oats', 241: 'Dbl Crop Corn/Soybeans', 242: 'Blueberries', 
+    243: 'Cabbage', 244: 'Cauliflower', 245: 'Celery', 246: 'Radishes', 247: 'Turnips', 
+    248: 'Eggplants', 249: 'Gourds', 250: 'Cranberries', 254: 'Dbl Crop Barley/Soybeans'
   };
-// ✅ UPDATED COLOR PALETTE (Covers common US Crops)
+
   const cropColors = { 
-    // Grains & Oilseeds
-    '1': '#F4D03F',   // Corn (Yellow)
-    '2': '#FFFFFF',   // Cotton (White)
-    '3': '#00A8E1',   // Rice (Light Blue)
-    '4': '#FF9E0A',   // Sorghum (Orange)
-    '5': '#229954',   // Soybeans (Dark Green)
-    '6': '#FFFF00',   // Sunflower (Bright Yellow)
-    '12': '#F7DC6F',  // Sweet Corn (Light Yellow)
-    '21': '#D35400',  // Barley (Rust/Orange)
-    '23': '#A04000',  // Spring Wheat (Brown)
-    '24': '#8D6E63',  // Winter Wheat (Dark Brown)
-    '28': '#8c9eff',  // Oats (Periwinkle)
-    '33': '#FF5722',  // Safflower (Red-Orange) 👈 Needed for your data
-    
-    // Forage & Grass
-    '36': '#2ECC71',  // Alfalfa (Green)
-    '37': '#9CCC65',  // Other Hay (Light Green)
-    '176': '#CDDC39', // Grassland/Pasture (Lime)
-    '61': '#BDBDBD',  // Fallow (Gray)
-    
-    // Veggies & Truck Crops
-    '41': '#A1887F',  // Sugarbeets
-    '43': '#FFCC80',  // Potatoes (Tan)
-    '49': '#FFE0B2',  // Onions
-    '53': '#4CAF50',  // Peas
-    '54': '#F44336',  // Tomatoes (Red)
-    
-    // Orchards & Vineyards
-    '66': '#C2185B',  // Cherries (Pink)
-    '67': '#FFAB91',  // Peaches (Peach)
-    '68': '#D32F2F',  // Apples (Red)
-    '69': '#7B1FA2',  // Grapes (Purple)
-    '71': '#BCAAA4',  // Other Tree Crops (Beige) 👈 Needed for Fresno
-    '72': '#CDDC39',  // Citrus
-    '75': '#D7CCC8',  // Almonds (Light Brown)
-    '76': '#795548',  // Walnuts (Brown)
-    '77': '#AED581',  // Pears (Light Green) 👈 Needed for Medford
-    '204': '#009688', // Pistachios (Teal)
-    '212': '#FF9800', // Oranges (Orange)
-    '223': '#FFCA28', // Apricots (Yellow-Orange)
-    
-    // Double Crops (Mixed)
-    '225': '#7F8C8D', // Dbl Crop WinWht/Corn
-    '226': '#95A5A6', // Dbl Crop Oats/Corn
-    '228': '#546E7A', // Dbl Crop Triticale/Corn (Blue-Grey) 👈 Needed
-    
-    // Land Cover / Non-Ag
-    '111': '#4FC3F7', // Open Water (Blue)
-    '121': '#ECEFF1', // Developed/Open Space
-    '122': '#CFD8DC', // Developed/Low Intensity
-    '190': '#7CB342', // Woody Wetlands
-    '195': '#81C784'  // Herbaceous Wetlands
+    '1': '#F4D03F', '2': '#FFFFFF', '3': '#00A8E1', '4': '#FF9E0A', '5': '#229954', '6': '#FFFF00', '12': '#F7DC6F', '21': '#D35400', '23': '#A04000', '24': '#8D6E63', '28': '#8c9eff', '33': '#FF5722', '36': '#2ECC71', '37': '#9CCC65', '176': '#CDDC39', '61': '#BDBDBD', '41': '#A1887F', '43': '#FFCC80', '49': '#FFE0B2', '53': '#4CAF50', '54': '#F44336', '66': '#C2185B', '67': '#FFAB91', '68': '#D32F2F', '69': '#7B1FA2', '71': '#BCAAA4', '72': '#CDDC39', '75': '#D7CCC8', '76': '#795548', '77': '#AED581', '204': '#009688', '212': '#FF9800', '223': '#FFCA28', '225': '#7F8C8D', '226': '#95A5A6', '228': '#546E7A', '111': '#4FC3F7', '121': '#ECEFF1', '122': '#CFD8DC', '190': '#7CB342', '195': '#81C784', '250': '#C0392B', '70': '#38761D', '11': '#FFEB3B'
   };
 
   useEffect(() => {
@@ -295,12 +190,9 @@ const CropDashboard = () => {
       const history = data.history || {};
       history[CURRENT_YEAR] = { crop: cropName, code: currentProps.CROP_TYPE, acres: currentProps.CSBACRES };
       
-      // ✅ CRASH FIX: Calculate Silt if missing
-      // If the API returns sand/clay but no silt, we must calculate it manually
-      // Silt = 100% - Sand% - Clay%
+      // Fix missing silt
       if (data.soil && data.soil.silt === undefined) {
         data.soil.silt = 100 - (data.soil.sand || 0) - (data.soil.clay || 0);
-        // Clamp to 0 just in case of rounding errors
         if (data.soil.silt < 0) data.soil.silt = 0;
       }
 
@@ -318,7 +210,6 @@ const CropDashboard = () => {
 
   const handleMapClick = useCallback((e) => {
     if (!map.current) return;
-    // Query the visual layer to get properties
     const features = map.current.queryRenderedFeatures(e.point, { layers: ['visual-layer'] });
     if (!features || !features[0]) return;
     
@@ -330,7 +221,6 @@ const CropDashboard = () => {
 
     if (popup.current) popup.current.remove();
 
-    // Create popup content
     const popupContent = document.createElement('div');
     popupContent.style.padding = '16px';
     popupContent.style.fontFamily = 'system-ui, -apple-system, sans-serif';
@@ -342,7 +232,6 @@ const CropDashboard = () => {
         </div>
     `;
 
-    // Create Button Element (Safer than string HTML)
     const btn = document.createElement('button');
     btn.innerText = "Run Field Analysis";
     btn.style.width = '100%';
@@ -355,9 +244,8 @@ const CropDashboard = () => {
     btn.style.fontWeight = '600';
     btn.style.fontSize = '14px';
     
-    // Attach event listener directly to element
     btn.onclick = (event) => {
-        event.preventDefault(); // Prevent weird map jumps
+        event.preventDefault(); 
         fetchAnalysisFromAzure(lat, lon, cropName, props);
     };
 
@@ -448,7 +336,7 @@ const CropDashboard = () => {
           paint: { "fill-color": [ "match", ["to-string", ["get", "CROP_TYPE"]], ...Object.entries(cropColors).flat(), "rgba(0, 0, 0, 0)" ], "fill-opacity": 0.75 }
         });
         
-        map.current.on('click', handleMapClick); // Use map click, then query features
+        map.current.on('click', handleMapClick); 
         map.current.on('mousemove', 'visual-layer', () => { if (map.current) map.current.getCanvas().style.cursor = 'pointer'; });
         map.current.on('mouseleave', 'visual-layer', () => { if (map.current) map.current.getCanvas().style.cursor = ''; });
 
@@ -593,7 +481,6 @@ const CropDashboard = () => {
                   </svg>
                   <div className="pie-legend">
                     <div className="pie-legend-item"><span className="pie-dot" style={{background: '#f59e0b'}}></span><span>Sand: {fieldData.soil.sand.toFixed(1)}%</span></div>
-                    {/* ✅ CRASH FIX: Silt is now guaranteed to exist */}
                     <div className="pie-legend-item"><span className="pie-dot" style={{background: '#a16207'}}></span><span>Silt: {fieldData.soil.silt.toFixed(1)}%</span></div>
                     <div className="pie-legend-item"><span className="pie-dot" style={{background: '#78350f'}}></span><span>Clay: {fieldData.soil.clay.toFixed(1)}%</span></div>
                   </div>
