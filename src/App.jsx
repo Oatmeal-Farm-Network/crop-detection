@@ -47,6 +47,7 @@ const loadMapResources = () => {
   });
 };
 
+// --- DATA HELPERS ---
 const getTextureClass = (sand, clay) => {
   const s = sand || 0;
   const c = clay || 0;
@@ -56,8 +57,9 @@ const getTextureClass = (sand, clay) => {
   return "Loam";
 };
 
+// ✅ FIX: Robust Health Score
 const getHealthScore = (soil) => {
-  if (!soil) return { score: 75, issues: [], strengths: [{ message: "Using regional data" }] };
+  if (!soil) return null;
   const ph = soil.ph || 6.5; 
   const soc = soil.soc || 20; 
   const nitrogen = soil.nitrogen || 2.5;
@@ -74,7 +76,6 @@ const getHealthScore = (soil) => {
   else { strengths.push({ message: "Good organic matter" }); }
 
   if (nitrogen < 2.0) { score -= 15; issues.push({ message: "Low Nitrogen", severity: "medium" }); }
-  
   return { score: Math.max(0, score), issues, strengths };
 };
 
@@ -89,11 +90,13 @@ const getFertilizerPlan = (soil) => {
   return plan;
 };
 
+// --- MAIN COMPONENT ---
 const CropDashboard = () => {
   const [address, setAddress] = useState('');
   const [suggestions, setSuggestions] = useState([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
+  
   const [showAnalytics, setShowAnalytics] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [fieldData, setFieldData] = useState(null);
@@ -107,6 +110,7 @@ const CropDashboard = () => {
   const popup = useRef(null);
   const mapInitialized = useRef(false);
 
+  // ✅ COMPLETE CROP LOOKUP
   const CROP_LOOKUP = {
     1: 'Corn', 2: 'Cotton', 3: 'Rice', 4: 'Sorghum', 5: 'Soybeans', 6: 'Sunflower',
     10: 'Peanuts', 11: 'Tobacco', 12: 'Sweet Corn', 13: 'Pop/Orn Corn', 14: 'Mint',
@@ -167,6 +171,7 @@ const CropDashboard = () => {
       const history = data.history || {};
       history[CURRENT_YEAR] = { crop: cropName, code: currentProps.CROP_TYPE, acres: currentProps.CSBACRES };
       
+      // ✅ FIX: Ensure soil object exists
       const soil = data.soil || { ph: 6.5, soc: 20, nitrogen: 2.5, clay: 25, sand: 35 };
       if (soil.silt === undefined) soil.silt = Math.max(0, 100 - (soil.sand || 0) - (soil.clay || 0));
 
@@ -390,15 +395,15 @@ const CropDashboard = () => {
       <div className="map-wrapper"><div ref={mapContainer} className="map-container" /></div>
 
       <div className={`drawer ${showAnalytics ? 'open' : ''}`}>
-        {/* ✅ FIX: Small, cleanly positioned Close Button */}
+        {/* ✅ FIXED: Small, top-right close button */}
         <button 
           className="close-btn" 
           onClick={() => setShowAnalytics(false)}
           style={{
             position: 'absolute',
             top: '16px',
-            right: '16px', // Moved to Right
-            left: 'auto',  // Reset Left
+            right: '16px',
+            left: 'auto', 
             width: '32px',
             height: '32px',
             display: 'flex',
@@ -415,8 +420,13 @@ const CropDashboard = () => {
           <X size={18} color="#64748b" />
         </button>
         
+        {/* ✅ FIXED: Centered Loading State */}
         {loading ? (
-          <div className="loading-state"><Loader className="spin" size={48} /><p className="loading-title">Analyzing Field</p><span className="loading-subtitle">Fetching soil data...</span></div>
+          <div className="loading-state">
+            <Loader className="spin" size={48} />
+            <p className="loading-title">Analyzing Field</p>
+            <span className="loading-subtitle">Fetching soil data...</span>
+          </div>
         ) : fieldData ? (
           <div className="drawer-content">
             <div className="drawer-header">
@@ -424,7 +434,7 @@ const CropDashboard = () => {
               <div className="header-meta"><MapPinned size={14} /><span>{fieldData.location.lat.toFixed(4)}°, {fieldData.location.lon.toFixed(4)}°</span><span style={{margin:'0 4px'}}>•</span><span>{fieldData.acres} Acres</span></div>
             </div>
 
-            {/* ✅ FIX: Correct Health Card */}
+            {/* ✅ FIXED: Health Card with safe check */}
             {fieldData.healthData && fieldData.healthData.score !== null && (
               <div className="card health-card">
                 <div className="card-title"><Activity size={18} /><span>Soil Health Analysis</span></div>
@@ -570,6 +580,41 @@ const CropDashboard = () => {
         .map-container { position: absolute; inset: 0; width: 100%; height: 100%; }
         .drawer { position: absolute; top: 0; right: 0; bottom: 0; width: 420px; background: white; box-shadow: -4px 0 20px rgba(0, 0, 0, 0.1); transform: translateX(100%); transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1); z-index: 30; display: flex; flex-direction: column; }
         .drawer.open { transform: translateX(0); }
+        
+        /* ✅ FIXED: Loading state centering */
+        .loading-state {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          height: 100%;
+          min-height: 200px;
+          gap: 16px;
+          padding: 40px;
+          color: #64748b;
+        }
+
+        .loading-title {
+          font-size: 16px;
+          font-weight: 600;
+          color: #1e293b;
+          margin: 0;
+        }
+
+        .loading-subtitle {
+          font-size: 13px;
+          color: #9ca3af;
+        }
+
+        .spin {
+          animation: spin 1s linear infinite;
+          color: #3b82f6;
+        }
+        
+        @keyframes spin {
+          100% { transform: rotate(360deg); }
+        }
+
         .drawer-content { padding: 32px 24px; overflow-y: auto; }
         .drawer-header { margin-bottom: 24px; }
         .header-top { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
